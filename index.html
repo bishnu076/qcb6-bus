@@ -24,60 +24,61 @@ button{font-family:inherit;cursor:pointer}
 const SURL  = 'https://rfgahqjayrvrhgebdmdw.supabase.co';
 const SKEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmZ2FocWpheXJ2cmhnZWJkbWR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzQwNjQsImV4cCI6MjA5NTIxMDA2NH0.XJCYWDIDxdtZxMW1Y9GwkJKhEdRhGylfui-h544d3zs';
 const SHEET_ID   = '1SMbxwo9VtF44_kFApGM45v-izNG8KkvW2Dc9GNsptkc';
-const STAFF_GID  = '0';
-const ROSTER_GID = '920957076';
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz2wyJBhm5dnC5N-e7zFPi_usBQQy_vEU_DakNMmXQ6TYTcSEXRGJbji1twWSfSxU8khA/exec';
-
-const STAFF_CSV  = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${STAFF_GID}`;
-const ROSTER_CSV = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${ROSTER_GID}`;
-
 const sb = supabase.createClient(SURL, SKEY);
 
-const COL = {
-  A:{bg:'#FAECE7',bd:'#D85A30',tx:'#993C1D',dk:'#4A1B0C',lbl:'🔴 Red'},
-  B:{bg:'#E6F1FB',bd:'#378ADD',tx:'#185FA5',dk:'#042C53',lbl:'🔵 Blue'},
-  C:{bg:'#EAF3DE',bd:'#639922',tx:'#3B6D11',dk:'#173404',lbl:'🟢 Green'}
+/* ===== STATION CONFIG ===== */
+// code = internal DB key, name = Japanese display, gid = Google Sheet tab ID
+const STN = {
+  A: { code:'A', name:'柏駅',           gid:'0',          bg:'#FAECE7', bd:'#D85A30', tx:'#993C1D', dk:'#4A1B0C', emoji:'🔴' },
+  B: { code:'B', name:'流山おおたかの森駅', gid:'920957076',  bg:'#E6F1FB', bd:'#378ADD', tx:'#185FA5', dk:'#042C53', emoji:'🔵' },
+  C: { code:'C', name:'南流山駅',         gid:'1282817497', bg:'#EAF3DE', bd:'#639922', tx:'#3B6D11', dk:'#173404', emoji:'🟢' }
 };
+const CODES = ['A','B','C'];
+
+function csvURL(gid){ return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${gid}`; }
 
 /* ===== STATE ===== */
 let S={
-  screen:'loading', as:'A', at:'A', ht:'A',
-  input:'', rSrch:'', sSrch:'',
+  screen:'loading', as:'A', ht:'A',
+  boardSrch:'', rSrch:'', sSrch:'',
   editId:null, editRN:'', editFB:'',
-  newRN:'', newFB:'',
   syncing:false, pushing:false,
-  toast:'', toastTimer:null,
-  lastSync:'',
+  toast:'', toastTimer:null, lastSync:'',
   data:{stations:[], staff:[], roster:[], checkins:[]}
 };
 
 /* ===== UTILS ===== */
 function today(){return new Date().toISOString().slice(0,10);}
-function todayLbl(){return new Date().toLocaleDateString('en-JP',{weekday:'long',month:'long',day:'numeric',year:'numeric'});}
+function todayLbl(){return new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'long'});}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function set(p){Object.assign(S,p);render();}
+function getStn(code){return S.data.stations.find(s=>s.code===code)||{code,name:'Station '+code,seat_limit:20};}
+function getStaff(id){return S.data.staff.find(s=>s.id===id);}
+function getRosterStn(staffId){const r=S.data.roster.find(r=>r.staff_id===staffId);return r?r.station_code:null;}
+function getCI(staffId){return S.data.checkins.find(c=>c.staff_id===staffId);}
+function stnRoster(code){return S.data.roster.filter(r=>r.station_code===code).map(r=>r.staff_id);}
+function stnCI(code){return S.data.checkins.filter(c=>c.station_code===code).map(c=>c.staff_id);}
+function stnCfg(code){return STN[code]||STN.A;}
+
 function toast(msg,ms=3000){
   if(S.toastTimer)clearTimeout(S.toastTimer);
   S.toast=msg;
   S.toastTimer=setTimeout(()=>{S.toast='';render();},ms);
   render();
 }
-function parseCSV(text){
-  const r=Papa.parse(text.replace(/^\uFEFF/,''),{header:true,skipEmptyLines:true});
-  return r.data||[];
-}
 
-/* ===== SUPABASE DATA ===== */
+/* ===== DATA ===== */
 async function reloadCI(){const{data}=await sb.from('checkins').select('*').eq('shift_date',today());S.data.checkins=data||[];}
 async function reloadRoster(){const{data}=await sb.from('roster').select('*').eq('shift_date',today());S.data.roster=data||[];}
-async function reloadStaff(){const{data}=await sb.from('staff').select('*').order('badge_number');S.data.staff=data||[];}
+async function reloadStaff(){const{data}=await sb.from('staff').select('*').order('real_name');S.data.staff=data||[];}
 
 async function loadAll(){
   S.screen='loading';render();
   try{
     const[st,sf,ro,ci]=await Promise.all([
       sb.from('stations').select('*').order('code'),
-      sb.from('staff').select('*').order('badge_number'),
+      sb.from('staff').select('*').order('real_name'),
       sb.from('roster').select('*').eq('shift_date',today()),
       sb.from('checkins').select('*').eq('shift_date',today())
     ]);
@@ -101,81 +102,69 @@ function subscribe(){
 
 /* ===== GOOGLE SHEETS SYNC ===== */
 async function syncFromSheets(){
-  S.syncing=true;toast('📥 Syncing from Google Sheets...',10000);render();
+  S.syncing=true;toast('📥 Syncing from Google Sheets...',15000);render();
   try{
-    // --- Fetch Staff ---
-    const staffRes=await fetch(STAFF_CSV);
-    const staffText=await staffRes.text();
-    const staffRows=parseCSV(staffText);
-
-    let staffAdded=0,staffUpdated=0;
-    for(const row of staffRows){
-      const badge=parseInt(row['Badge No']||row['badge no']||row['Badge']||'');
-      const rn=(row['Real Name']||row['real name']||row['Name']||'').trim();
-      const fb=(row['Facebook Name']||row['facebook name']||row['Facebook']||'').trim();
-      if(!badge||!rn)continue;
-      const existing=S.data.staff.find(s=>s.badge_number===badge);
-      if(existing){
-        await sb.from('staff').update({real_name:rn,facebook_name:fb}).eq('id',existing.id);
-        staffUpdated++;
-      }else{
-        await sb.from('staff').insert({badge_number:badge,real_name:rn,facebook_name:fb});
-        staffAdded++;
-      }
-    }
-    await reloadStaff();
-
-    // --- Fetch Roster ---
-    const rosterRes=await fetch(ROSTER_CSV);
-    const rosterText=await rosterRes.text();
-    const rosterRows=parseCSV(rosterText);
+    let totalAdded=0,totalRoster=0;
 
     // Clear today's roster first
-    const existingRIds=S.data.roster.map(r=>r.id);
-    if(existingRIds.length>0)await sb.from('roster').delete().in('id',existingRIds);
+    const oldRIds=S.data.roster.map(r=>r.id);
+    if(oldRIds.length>0)await sb.from('roster').delete().in('id',oldRIds);
+    S.data.roster=[];
 
-    let rosterCount=0;
-    for(const row of rosterRows){
-      const badge=parseInt(row['Badge No']||row['badge no']||row['Badge']||'');
-      const stn=(row['Station']||row['station']||'').trim().toUpperCase();
-      if(!badge||!['A','B','C'].includes(stn))continue;
-      const staff=S.data.staff.find(s=>s.badge_number===badge);
-      if(!staff)continue;
-      await sb.from('roster').insert({shift_date:today(),staff_id:staff.id,station_code:stn});
-      rosterCount++;
+    for(const code of CODES){
+      const cfg=STN[code];
+      // Fetch tab CSV (no header — just names in column A)
+      const res=await fetch(csvURL(cfg.gid));
+      const text=await res.text();
+      const parsed=Papa.parse(text.replace(/^\uFEFF/,''),{header:false,skipEmptyLines:true});
+      const names=parsed.data
+        .map(row=>(row[0]||'').replace(/^"|"$/g,'').trim())
+        .filter(n=>n&&n.length>1);
+
+      for(const name of names){
+        // Find or create staff by real_name
+        let member=S.data.staff.find(s=>s.real_name.toUpperCase()===name.toUpperCase());
+        if(!member){
+          const maxB=S.data.staff.reduce((m,s)=>Math.max(m,s.badge_number),0);
+          const{data,error}=await sb.from('staff')
+            .insert({badge_number:maxB+1,real_name:name,facebook_name:''})
+            .select().single();
+          if(!error&&data){S.data.staff.push(data);member=data;totalAdded++;}
+          else continue;
+        }
+        // Add to today's roster for this station
+        const{data:rData}=await sb.from('roster')
+          .insert({shift_date:today(),staff_id:member.id,station_code:code})
+          .select().single();
+        if(rData){S.data.roster.push(rData);totalRoster++;}
+      }
     }
-    await reloadRoster();
 
-    const msg=`✅ Synced! ${staffRows.length} staff, ${rosterCount} in today's roster`;
+    await reloadStaff();
     S.lastSync=new Date().toLocaleTimeString();
-    toast(msg,4000);
+    toast(`✅ Synced! ${totalRoster} staff loaded across 3 stations`,4000);
   }catch(e){
-    toast('❌ Sync failed — check sheet is set to public: '+e.message,5000);
+    toast('❌ Sync failed — check sheet is public viewer: '+e.message,6000);
   }
   S.syncing=false;render();
 }
 
-/* ===== PUSH TO GOOGLE SHEETS ===== */
+/* ===== PUSH TO SHEETS ===== */
 async function pushToSheets(){
   S.pushing=true;toast('📤 Pushing report to Google Sheets...',10000);render();
   try{
-    // Boarding log
     const boardingLog=S.data.checkins.map(ci=>{
-      const m=getStaff(ci.staff_id);
-      return{badge:m?.badge_number||'',realName:m?.real_name||'',facebook:m?.facebook_name||'',station:getStn(ci.station_code).name,time:new Date(ci.checked_in_at).toLocaleTimeString()};
+      const m=getStaff(ci.staff_id),stn=getStn(ci.station_code);
+      return{realName:m?.real_name||'',facebook:m?.facebook_name||'',station:stn.name,time:new Date(ci.checked_in_at).toLocaleTimeString()};
     });
-
-    // Exceptions
     const exceptions=[];
-    ['A','B','C'].forEach(s=>{
+    CODES.forEach(s=>{
       const rIds=stnRoster(s),ciIds=stnCI(s);
       rIds.filter(id=>!ciIds.includes(id)).forEach(id=>{
         const m=getStaff(id),ci=getCI(id);
-        exceptions.push({badge:m?.badge_number||'',realName:m?.real_name||'',facebook:m?.facebook_name||'',assigned:getStn(s).name,boardedAt:ci?getStn(ci.station_code).name:'',type:ci?'Wrong Station':'No Show'});
+        exceptions.push({realName:m?.real_name||'',facebook:m?.facebook_name||'',assigned:getStn(s).name,boardedAt:ci?getStn(ci.station_code).name:'',type:ci?'Wrong Station':'No Show'});
       });
     });
-
-    // Summary
     const summary={
       aB:stnCI('A').length,aA:stnRoster('A').length,
       bB:stnCI('B').length,bA:stnRoster('B').length,
@@ -184,28 +173,43 @@ async function pushToSheets(){
       wrong:exceptions.filter(e=>e.type==='Wrong Station').length,
       noShow:exceptions.filter(e=>e.type==='No Show').length
     };
-
-    await fetch(SCRIPT_URL,{
-      method:'POST',
-      mode:'no-cors',
-      body:JSON.stringify({action:'push_report',date:today(),boardingLog,exceptions,summary})
-    });
-
+    await fetch(SCRIPT_URL,{method:'POST',mode:'no-cors',body:JSON.stringify({action:'push_report',date:today(),boardingLog,exceptions,summary})});
     toast('✅ Report pushed to Google Sheets!',4000);
-  }catch(e){
-    toast('❌ Push failed: '+e.message,5000);
-  }
+  }catch(e){toast('❌ Push failed: '+e.message,5000);}
   S.pushing=false;render();
 }
 
-/* ===== SUPABASE ACTIONS ===== */
-async function addStaff(){
-  const rn=S.newRN.trim(),fb=S.newFB.trim();
-  if(!rn)return;
-  const maxB=S.data.staff.reduce((m,s)=>Math.max(m,s.badge_number),0);
-  const{data,error}=await sb.from('staff').insert({badge_number:maxB+1,real_name:rn,facebook_name:fb}).select().single();
-  if(!error&&data){S.data.staff.push(data);S.newRN='';S.newFB='';}
+/* ===== ACTIONS ===== */
+async function doCheckIn(stnCode,staffId){
+  const ex=S.data.checkins.find(c=>c.staff_id===staffId);
+  if(ex){
+    await sb.from('checkins').delete().eq('id',ex.id);
+    S.data.checkins=S.data.checkins.filter(c=>c.id!==ex.id);
+  }else{
+    const{data}=await sb.from('checkins').insert({shift_date:today(),staff_id:staffId,station_code:stnCode}).select().single();
+    if(data)S.data.checkins.push(data);
+  }
+  S.boardSrch='';render();
+}
+async function overrideCheckIn(stnCode,staffId,name){
+  if(!confirm('Allow '+name+' to board here as an exception?'))return;
+  await doCheckIn(stnCode,staffId);
+}
+async function resetCI(stnCode){
+  const stn=getStn(stnCode);
+  if(!confirm(stn.name+' のチェックインをリセットしますか？'))return;
+  const ids=S.data.checkins.filter(c=>c.station_code===stnCode).map(c=>c.id);
+  if(ids.length>0)await sb.from('checkins').delete().in('id',ids);
+  S.data.checkins=S.data.checkins.filter(c=>c.station_code!==stnCode);
   render();
+}
+async function updateStn(code){
+  const n=document.getElementById('sn'+code),l=document.getElementById('sl'+code);
+  if(!n||!l)return;
+  await sb.from('stations').update({name:n.value,seat_limit:parseInt(l.value)||20}).eq('code',code);
+  const idx=S.data.stations.findIndex(s=>s.code===code);
+  if(idx>=0)S.data.stations[idx]={...S.data.stations[idx],name:n.value,seat_limit:parseInt(l.value)||20};
+  toast('✅ Saved',1500);render();
 }
 async function saveEdit(){
   const rn=S.editRN.trim(),fb=S.editFB.trim();if(!rn)return;
@@ -222,244 +226,223 @@ async function removeStaff(id){
   S.data.checkins=S.data.checkins.filter(c=>c.staff_id!==id);
   render();
 }
-async function assignStation(staffId,stnCode){
-  const ex=S.data.roster.find(r=>r.staff_id===staffId);
-  if(stnCode==='none'){
-    if(ex){await sb.from('roster').delete().eq('id',ex.id);S.data.roster=S.data.roster.filter(r=>r.staff_id!==staffId);}
-  }else if(ex){
-    await sb.from('roster').update({station_code:stnCode}).eq('id',ex.id);
-    const idx=S.data.roster.findIndex(r=>r.id===ex.id);
-    if(idx>=0)S.data.roster[idx]={...ex,station_code:stnCode};
-  }else{
-    const{data}=await sb.from('roster').insert({shift_date:today(),staff_id:staffId,station_code:stnCode}).select().single();
-    if(data)S.data.roster.push(data);
-  }
-  render();
-}
-async function doCheckIn(stnCode,staffId){
-  const ex=S.data.checkins.find(c=>c.staff_id===staffId);
-  if(ex){
-    await sb.from('checkins').delete().eq('id',ex.id);
-    S.data.checkins=S.data.checkins.filter(c=>c.id!==ex.id);
-  }else{
-    const{data}=await sb.from('checkins').insert({shift_date:today(),staff_id:staffId,station_code:stnCode}).select().single();
-    if(data)S.data.checkins.push(data);
-  }
-  S.input='';render();
-}
-async function overrideCheckIn(stnCode,staffId,name){
-  if(!confirm('Allow '+name+' to board here as an exception?'))return;
-  await doCheckIn(stnCode,staffId);
-}
-async function resetCI(stnCode){
-  const stn=getStn(stnCode);
-  if(!confirm('Reset all check-ins for '+stn.name+'?'))return;
-  const ids=S.data.checkins.filter(c=>c.station_code===stnCode).map(c=>c.id);
-  if(ids.length>0)await sb.from('checkins').delete().in('id',ids);
-  S.data.checkins=S.data.checkins.filter(c=>c.station_code!==stnCode);
-  render();
-}
-async function updateStn(code){
-  const n=document.getElementById('sn'+code),l=document.getElementById('sl'+code);
-  if(!n||!l)return;
-  const name=n.value,limit=parseInt(l.value)||20;
-  await sb.from('stations').update({name,seat_limit:limit}).eq('code',code);
-  const idx=S.data.stations.findIndex(s=>s.code===code);
-  if(idx>=0)S.data.stations[idx]={...S.data.stations[idx],name,seat_limit:limit};
-  toast('✅ Saved',1500);render();
-}
-
-/* ===== HELPERS ===== */
-function getStn(code){return S.data.stations.find(s=>s.code===code)||{code,name:'Station '+code,seat_limit:20};}
-function getStaff(id){return S.data.staff.find(s=>s.id===id);}
-function getRosterStn(staffId){const r=S.data.roster.find(r=>r.staff_id===staffId);return r?r.station_code:null;}
-function getCI(staffId){return S.data.checkins.find(c=>c.staff_id===staffId);}
-function stnRoster(code){return S.data.roster.filter(r=>r.station_code===code).map(r=>r.staff_id);}
-function stnCI(code){return S.data.checkins.filter(c=>c.station_code===code).map(c=>c.staff_id);}
 
 function exportCSV(){
-  let rows=['Badge No,Real Name,Facebook Name,Assigned Station,Boarded,Boarded At,Time'];
+  let rows=['Real Name,Facebook Name,Assigned Station,Boarded,Boarded At,Time'];
   S.data.staff.forEach(m=>{
     const a=getRosterStn(m.id),ci=getCI(m.id);
-    rows.push([m.badge_number,m.real_name,m.facebook_name||'',a?getStn(a).name:'Not assigned',ci?'YES':'NO',ci?getStn(ci.station_code).name:'',ci?new Date(ci.checked_in_at).toLocaleTimeString():''].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+    rows.push([m.real_name,m.facebook_name||'',a?getStn(a).name:'Not assigned',ci?'YES':'NO',ci?getStn(ci.station_code).name:'',ci?new Date(ci.checked_in_at).toLocaleTimeString():''].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
   });
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
   a.download='QCB6_'+today()+'.csv';a.click();
 }
 
-function numPad(){
-  let h='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 1.1rem">';
-  [1,2,3,4,5,6,7,8,9,'✕',0,'⌫'].forEach(k=>{
-    if(k==='✕')h+=`<button onclick="set({input:''})" style="height:62px;border-radius:12px;border:1.5px solid #ddd;background:#f7f7f5;font-size:20px;color:#888">✕</button>`;
-    else if(k==='⌫')h+=`<button onclick="set({input:S.input.slice(0,-1)})" style="height:62px;border-radius:12px;border:1.5px solid #ddd;background:#f7f7f5;font-size:22px;color:#555">⌫</button>`;
-    else h+=`<button onclick="set({input:S.input+'${k}'})" style="height:62px;border-radius:12px;border:1.5px solid #ddd;background:#fff;font-size:24px;font-weight:700;color:#1a1a1a">${k}</button>`;
-  });
-  return h+'</div>';
-}
-
-/* ===== SCREENS ===== */
-function scrLoading(){return'<div style="padding:4rem;text-align:center;color:#aaa"><div style="font-size:40px;margin-bottom:1rem">🚌</div><div>Connecting...</div></div>';}
-function scrError(){return`<div style="padding:3rem;text-align:center"><div style="font-size:36px;margin-bottom:1rem">⚠️</div><div style="font-size:16px;color:#A32D2D;margin-bottom:1rem">Could not connect</div><button onclick="loadAll()" style="padding:10px 20px;border-radius:8px;border:none;background:#1a1a1a;color:white;font-size:14px">Retry</button></div>`;}
-
+/* ===== HOME ===== */
 function scrHome(){
   const rSet=S.data.roster.length>0,tot=S.data.checkins.length;
   let h=`<div style="padding:1.25rem">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-      <h1 style="font-size:20px;font-weight:700;color:#1a1a1a">🚌 QCB6 Bus Check-in</h1>
-      <button onclick="set({screen:'admin',sSrch:''})" style="background:none;border:1px solid #ddd;border-radius:8px;padding:7px 11px;font-size:13px;color:#666">⚙️ Setup</button>
+      <h1 style="font-size:20px;font-weight:700;color:#1a1a1a">🚌 QCB6 乗車チェック</h1>
+      <button onclick="set({screen:'admin',sSrch:''})" style="background:none;border:1px solid #ddd;border-radius:8px;padding:7px 11px;font-size:13px;color:#666">⚙️</button>
     </div>
-    <p style="font-size:12px;color:#aaa;margin-bottom:10px">${todayLbl()}</p>
+    <p style="font-size:12px;color:#aaa;margin-bottom:12px">${todayLbl()}</p>
 
-    <!-- Sync from Sheets -->
     <div style="background:#f7f7f5;border:1px solid #e0e0dc;border-radius:10px;padding:10px 12px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
       <div style="flex:1">
-        <div style="font-size:13px;font-weight:600;color:#1a1a1a">Google Sheets Sync</div>
-        <div style="font-size:11px;color:#aaa;margin-top:1px">${S.lastSync?'Last sync: '+S.lastSync:'Pull staff & roster from your sheet'}</div>
+        <div style="font-size:13px;font-weight:600;color:#1a1a1a">Google Sheets から同期</div>
+        <div style="font-size:11px;color:#aaa;margin-top:1px">${S.lastSync?'最終同期: '+S.lastSync:'毎朝シフト入力後に同期してください'}</div>
       </div>
-      <button onclick="syncFromSheets()" style="padding:8px 14px;border-radius:8px;border:none;background:${S.syncing?'#aaa':'#1a1a1a'};color:white;font-size:13px;font-weight:700;white-space:nowrap" ${S.syncing?'disabled':''}>
-        ${S.syncing?'Syncing...':'📥 Sync'}
+      <button onclick="syncFromSheets()" style="padding:8px 16px;border-radius:8px;border:none;background:${S.syncing?'#aaa':'#1a1a1a'};color:white;font-size:13px;font-weight:700;white-space:nowrap" ${S.syncing?'disabled':''}>
+        ${S.syncing?'同期中...':'📥 同期'}
       </button>
     </div>`;
 
   if(!rSet){
     h+=`<div style="background:#FFF8E6;border:2px solid #F5A623;border-radius:12px;padding:1rem;margin-bottom:14px">
-      <div style="font-size:14px;font-weight:700;color:#A0650A;margin-bottom:4px">⚠️ Today's roster not set</div>
-      <div style="font-size:13px;color:#C17D20;margin-bottom:10px">Either sync from Google Sheets above, or set manually below.</div>
-      <button onclick="set({screen:'roster',rSrch:''})" style="width:100%;padding:10px;border-radius:8px;border:none;background:#F5A623;color:white;font-size:14px;font-weight:700">Set Roster Manually →</button>
+      <div style="font-size:14px;font-weight:700;color:#A0650A;margin-bottom:4px">⚠️ 本日のロスターが未設定です</div>
+      <div style="font-size:13px;color:#C17D20">上の「同期」ボタンを押して Google Sheets から読み込んでください。</div>
     </div>`;
   }else{
     h+=`<div style="background:#EAF3DE;border:1px solid #639922;border-radius:10px;padding:9px 12px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
-      <div style="font-size:13px;color:#3B6D11;font-weight:600">✅ Roster set · ${S.data.roster.length} assigned · ${tot} boarded</div>
-      <button onclick="set({screen:'roster',rSrch:''})" style="background:none;border:1px solid #639922;border-radius:6px;padding:4px 10px;font-size:12px;color:#3B6D11">Edit</button>
+      <div style="font-size:13px;color:#3B6D11;font-weight:600">✅ ${S.data.roster.length}名登録済み · ${tot}名乗車済み</div>
     </div>`;
   }
 
-  ['A','B','C'].forEach(s=>{
-    const col=COL[s],stn=getStn(s),cnt=stnCI(s).length,lim=stn.seat_limit,asgn=stnRoster(s).length;
+  CODES.forEach(code=>{
+    const cfg=STN[code],stn=getStn(code),cnt=stnCI(code).length,lim=stn.seat_limit,asgn=stnRoster(code).length;
     const full=cnt>=lim,pct=lim>0?Math.min(100,Math.round(cnt/lim*100)):0;
-    h+=`<button onclick="set({screen:'board',as:'${s}',input:''})"
-      style="width:100%;background:${col.bg};border:2px solid ${col.bd};border-radius:14px;padding:1rem 1.1rem;display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;text-align:left">
+    h+=`<button onclick="set({screen:'board',as:'${code}',boardSrch:''})"
+      style="width:100%;background:${cfg.bg};border:2px solid ${cfg.bd};border-radius:14px;padding:1rem 1.1rem;display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;text-align:left">
       <div style="flex:1">
-        <div style="display:flex;align-items:center;gap:7px;margin-bottom:2px">
-          <span style="font-size:16px;font-weight:700;color:${col.dk}">${esc(stn.name)}</span>
-          <span style="font-size:11px;color:${col.tx};background:white;padding:2px 7px;border-radius:4px;border:1px solid ${col.bd}">${col.lbl}</span>
-        </div>
-        <div style="font-size:12px;color:${col.tx}">${asgn} staff assigned today</div>
+        <div style="font-size:16px;font-weight:700;color:${cfg.dk};margin-bottom:2px">${cfg.emoji} ${esc(stn.name)}</div>
+        <div style="font-size:12px;color:${cfg.tx}">${asgn}名 割り当て済み</div>
         <div style="height:5px;width:130px;background:rgba(0,0,0,0.1);border-radius:3px;margin-top:8px">
-          <div style="height:5px;border-radius:3px;width:${pct}%;background:${full?'#E24B4A':col.bd}"></div>
+          <div style="height:5px;border-radius:3px;width:${pct}%;background:${full?'#E24B4A':cfg.bd}"></div>
         </div>
       </div>
       <div style="text-align:right;margin-left:12px">
-        <div style="font-size:28px;font-weight:800;color:${full?'#A32D2D':col.dk};line-height:1">${cnt}/${lim}</div>
-        <div style="font-size:11px;color:${full?'#A32D2D':col.tx};margin-top:2px">${full?'⚠ FULL':'tap to board'}</div>
+        <div style="font-size:28px;font-weight:800;color:${full?'#A32D2D':cfg.dk};line-height:1">${cnt}/${lim}</div>
+        <div style="font-size:11px;color:${full?'#A32D2D':cfg.tx};margin-top:2px">${full?'⚠ 満席':'タップして乗車'}</div>
       </div>
     </button>`;
   });
 
-  h+=`<button onclick="set({screen:'report'})" style="width:100%;margin-top:4px;padding:11px;border-radius:9px;border:1px solid #ddd;background:#f7f7f5;font-size:13px;color:#555">📋 Attendance Report</button>
+  h+=`<button onclick="set({screen:'report'})" style="width:100%;margin-top:4px;padding:11px;border-radius:9px;border:1px solid #ddd;background:#f7f7f5;font-size:13px;color:#555">📋 出勤レポート</button>
   </div>`;
   return h;
 }
 
+/* ===== BOARDING ===== */
 function scrBoard(){
-  const s=S.as,col=COL[s],stn=getStn(s);
-  const ciIds=stnCI(s),cnt=ciIds.length,rem=stn.seat_limit-cnt,full=rem<=0;
-  const rIds=stnRoster(s),inp=S.input;
-  const match=inp?S.data.staff.find(m=>String(m.badge_number)===inp):null;
-  const inRoster=match&&rIds.includes(match.id);
-  const exCI=match?getCI(match.id):null;
-  const alreadyHere=exCI&&exCI.station_code===s;
-  const boardedElse=exCI&&exCI.station_code!==s;
-  const assignedTo=match?getRosterStn(match.id):null;
-  const wrongStn=match&&!inRoster&&assignedTo&&assignedTo!==s;
-  const notSched=match&&!inRoster&&!assignedTo;
+  const code=S.as,cfg=STN[code],stn=getStn(code);
+  const ciIds=stnCI(code),cnt=ciIds.length,rem=stn.seat_limit-cnt,full=rem<=0;
+  const rIds=stnRoster(code);
+  const srch=(S.boardSrch||'').trim().toLowerCase();
+
+  const rosterStaff=S.data.staff.filter(m=>rIds.includes(m.id));
+  const filtered=srch
+    ?rosterStaff.filter(m=>{
+        const n=m.real_name.toLowerCase();
+        return n.startsWith(srch)||n.includes(' '+srch);
+      })
+    :[];
 
   let h=`<div>
-    <div style="background:${col.bd};padding:1rem 1.1rem 0.9rem">
+    <!-- Header -->
+    <div style="background:${cfg.bd};padding:1rem 1.1rem 0.9rem">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <button class="bk" onclick="set({screen:'home',input:''})" style="color:white">←</button>
-        <span style="font-size:17px;font-weight:700;color:white;flex:1">${esc(stn.name)}</span>
-        <button onclick="set({screen:'history',ht:'${s}'})" style="background:rgba(255,255,255,.2);border:none;border-radius:7px;padding:6px 10px;color:white;font-size:12px;font-weight:600">👥 Status</button>
+        <button class="bk" onclick="set({screen:'home',boardSrch:''})" style="color:white">←</button>
+        <span style="font-size:17px;font-weight:700;color:white;flex:1">${cfg.emoji} ${esc(stn.name)}</span>
+        <button onclick="set({screen:'history',ht:'${code}'})" style="background:rgba(255,255,255,.2);border:none;border-radius:7px;padding:6px 10px;color:white;font-size:12px;font-weight:600">👥 状況</button>
       </div>
       <div style="display:flex;gap:8px">
         <div style="flex:1;background:rgba(255,255,255,.18);border-radius:10px;padding:8px 11px">
-          <div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.7px;font-weight:700">BOARDED</div>
+          <div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.5px;font-weight:700">乗車済み</div>
           <div style="font-size:28px;font-weight:800;color:white;line-height:1.1">${cnt}</div>
         </div>
         <div style="flex:1;background:${full?'#FCEBEB':'rgba(255,255,255,.18)'};border-radius:10px;padding:8px 11px">
-          <div style="font-size:9px;color:${full?'#A32D2D':'rgba(255,255,255,.7)'};letter-spacing:.7px;font-weight:700">SEATS LEFT</div>
+          <div style="font-size:9px;color:${full?'#A32D2D':'rgba(255,255,255,.7)'};letter-spacing:.5px;font-weight:700">残席</div>
           <div style="font-size:28px;font-weight:800;color:${full?'#A32D2D':'white'};line-height:1.1">${rem}</div>
         </div>
         <div style="flex:1;background:rgba(255,255,255,.18);border-radius:10px;padding:8px 11px">
-          <div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.7px;font-weight:700">ASSIGNED</div>
+          <div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.5px;font-weight:700">本日登録</div>
           <div style="font-size:28px;font-weight:800;color:white;line-height:1.1">${rIds.length}</div>
         </div>
       </div>
-      ${full?'<div style="margin-top:9px;background:#FCEBEB;border-radius:8px;padding:9px;text-align:center;font-size:14px;color:#A32D2D;font-weight:800">⚠️ BUS IS FULL — Stop boarding!</div>':''}
+      ${full?'<div style="margin-top:9px;background:#FCEBEB;border-radius:8px;padding:9px;text-align:center;font-size:14px;color:#A32D2D;font-weight:800">⚠️ 満席 — 乗車を停止してください！</div>':''}
     </div>
 
-    <div style="padding:1rem 1.25rem 0.75rem;min-height:135px">
-      <div style="font-size:11px;color:#aaa;letter-spacing:.5px;font-weight:700;margin-bottom:6px">BADGE NUMBER</div>
-      <div style="font-size:52px;font-weight:800;letter-spacing:6px;line-height:1;min-height:60px;color:${inp?'#1a1a1a':'#e0e0dc'}">${inp||'—'}</div>`;
+    <!-- Search -->
+    <div style="padding:12px 1rem 6px">
+      <div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:.5px;margin-bottom:6px">名前を入力して検索</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="bsrch"
+          placeholder="例: SH, RA, TH, SIN..."
+          value="${esc(S.boardSrch)}"
+          oninput="set({boardSrch:this.value})"
+          autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false"
+          style="flex:1;font-size:18px;font-weight:600;padding:12px 14px;border-radius:10px;border:2px solid ${cfg.bd};text-transform:uppercase"
+          autofocus />
+        ${S.boardSrch?`<button onclick="set({boardSrch:''})" style="padding:11px 14px;border-radius:10px;border:1px solid #ddd;background:#f5f5f0;font-size:16px;color:#888">✕</button>`:''}
+      </div>
+    </div>
 
-  if(inp){
-    if(!match){
-      h+=`<div style="margin-top:8px;background:#FCEBEB;border-radius:9px;padding:11px 14px;display:flex;align-items:center;gap:8px">
-        <span style="font-size:20px">❓</span><span style="font-size:14px;color:#A32D2D;font-weight:600">Badge #${esc(inp)} not found</span>
-      </div>`;
-    }else if(boardedElse){
-      const wc=COL[exCI.station_code];
-      h+=`<div style="margin-top:8px;background:#EAF3DE;border:1.5px solid #639922;border-radius:9px;padding:11px 14px">
-        <div style="font-size:11px;color:#3B6D11;font-weight:700;margin-bottom:3px">✅ ALREADY BOARDED — different station</div>
-        <div style="font-size:18px;font-weight:700;color:#1a1a1a">#${match.badge_number} — ${esc(match.real_name)}</div>
-        ${match.facebook_name?`<div style="font-size:12px;color:#3B6D11">fb: ${esc(match.facebook_name)}</div>`:''}
-        <div style="font-size:12px;color:#3B6D11;margin-top:5px">Boarded at <span style="background:${wc.bg};color:${wc.dk};padding:1px 7px;border-radius:3px;font-weight:700">${wc.lbl} — ${esc(getStn(exCI.station_code).name)}</span></div>
-      </div>`;
-    }else if(alreadyHere){
-      h+=`<div style="margin-top:8px;background:#EAF3DE;border:1.5px solid #639922;border-radius:9px;padding:11px 14px">
-        <div style="font-size:11px;color:#3B6D11;font-weight:700;margin-bottom:3px">✅ ALREADY BOARDED HERE</div>
-        <div style="font-size:18px;font-weight:700;color:#1a1a1a">#${match.badge_number} — ${esc(match.real_name)}</div>
-        ${match.facebook_name?`<div style="font-size:12px;color:#3B6D11">fb: ${esc(match.facebook_name)}</div>`:''}
-        <button onclick="doCheckIn('${s}',${match.id})" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:1.5px solid #639922;background:#f5f5f0;font-size:13px;color:#3B6D11;font-weight:600">↩ Undo check-in</button>
-      </div>`;
-    }else if(wrongStn){
-      const oc=COL[assignedTo];
-      h+=`<div style="margin-top:8px;background:#FFF8E6;border:1.5px solid #F5A623;border-radius:9px;padding:11px 14px">
-        <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">⚠️ WRONG STATION</div>
-        <div style="font-size:18px;font-weight:700;color:#1a1a1a">#${match.badge_number} — ${esc(match.real_name)}</div>
-        ${match.facebook_name?`<div style="font-size:12px;color:#A0650A">fb: ${esc(match.facebook_name)}</div>`:''}
-        <div style="font-size:12px;color:#A0650A;margin-top:5px">Assigned to <span style="background:${oc.bg};color:${oc.dk};padding:1px 7px;border-radius:3px;font-weight:700">${oc.lbl} — ${esc(getStn(assignedTo).name)}</span></div>
-        <button onclick="overrideCheckIn('${s}',${match.id},'${esc(match.real_name).replace(/'/g,"\\'")} ')" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:1.5px solid #F5A623;background:#FFF8E6;font-size:13px;color:#A0650A;font-weight:600">⚡ Override — Allow exception</button>
-      </div>`;
-    }else if(notSched){
-      h+=`<div style="margin-top:8px;background:#f5f5f0;border:1.5px solid #ddd;border-radius:9px;padding:11px 14px">
-        <div style="font-size:11px;color:#888;font-weight:700;margin-bottom:3px">NOT IN TODAY'S ROSTER</div>
-        <div style="font-size:18px;font-weight:700;color:#1a1a1a">#${match.badge_number} — ${esc(match.real_name)}</div>
-        ${match.facebook_name?`<div style="font-size:12px;color:#aaa">fb: ${esc(match.facebook_name)}</div>`:''}
-        <div style="font-size:12px;color:#aaa;margin-top:4px">Not scheduled for any station today.</div>
-      </div>`;
-    }else if(inRoster&&!full){
-      h+=`<div style="margin-top:8px;background:${col.bg};border:2px solid ${col.bd};border-radius:10px;padding:12px 14px">
-        <div style="font-size:11px;color:${col.tx};font-weight:700;margin-bottom:3px">FOUND ✓</div>
-        <div style="font-size:21px;font-weight:700;color:${col.dk}">#${match.badge_number} — ${esc(match.real_name)}</div>
-        ${match.facebook_name?`<div style="font-size:12px;color:${col.tx}">fb: ${esc(match.facebook_name)}</div>`:''}
-        <button onclick="doCheckIn('${s}',${match.id})" style="margin-top:11px;width:100%;padding:15px;border-radius:10px;border:none;background:${col.bd};font-size:17px;color:white;font-weight:800">✓ BOARD — ${esc(match.real_name)}</button>
-      </div>`;
-    }else if(inRoster&&full){
-      h+=`<div style="margin-top:8px;background:${col.bg};border:2px solid ${col.bd};border-radius:10px;padding:12px 14px">
-        <div style="font-size:18px;font-weight:700;color:${col.dk}">#${match.badge_number} — ${esc(match.real_name)}</div>
-        <div style="margin-top:8px;background:#FCEBEB;border-radius:7px;padding:8px;text-align:center;font-size:13px;color:#A32D2D;font-weight:700">Bus full — cannot board</div>
-      </div>`;
+    <!-- A-Z quick tap -->
+    <div style="padding:4px 1rem 8px;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch">`;
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').forEach(l=>{
+    const has=rosterStaff.some(m=>m.real_name.toUpperCase().startsWith(l));
+    const active=S.boardSrch.toUpperCase()===l;
+    h+=`<button onclick="set({boardSrch:'${l}'})" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid ${has?cfg.bd:'#e8e8e8'};background:${active?cfg.bd:(has?cfg.bg:'#f7f7f5')};color:${active?'white':(has?cfg.dk:'#ccc')};font-size:12px;font-weight:700;margin-right:3px">${l}</button>`;
+  });
+  h+=`</div>
+
+    <!-- Staff list -->
+    <div style="padding:0 1rem;overflow-y:auto;max-height:calc(100vh - 340px)">`;
+
+  if(!srch){
+    const waiting=rosterStaff.filter(m=>!ciIds.includes(m.id));
+    const boardedList=rosterStaff.filter(m=>ciIds.includes(m.id));
+    if(rosterStaff.length===0){
+      h+=`<div style="text-align:center;padding:3rem 1rem;color:#bbb;font-size:14px">スタッフが登録されていません。<br>ホームから同期してください。</div>`;
+    }else{
+      if(waiting.length>0){
+        h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 4px">乗車待ち (${waiting.length}名) — 文字を入力して絞り込む</div>`;
+        waiting.forEach(m=>{
+          h+=`<div style="padding:11px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px">
+            <div style="flex:1"><div style="font-size:16px;font-weight:500;color:#555">${esc(m.real_name)}</div></div>
+            <div style="width:28px;height:28px;border-radius:6px;border:2px solid #ddd;flex-shrink:0"></div>
+          </div>`;
+        });
+      }
+      if(boardedList.length>0){
+        h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.5px;font-weight:700;padding:12px 0 4px">✅ 乗車済み (${boardedList.length}名)</div>`;
+        boardedList.forEach(m=>{
+          h+=`<div style="padding:9px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px;opacity:.5">
+            <div style="flex:1"><div style="font-size:15px;color:#888;text-decoration:line-through">${esc(m.real_name)}</div></div>
+            <div style="width:28px;height:28px;border-radius:6px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:15px">✓</span></div>
+          </div>`;
+        });
+      }
     }
+  } else if(filtered.length===0){
+    h+=`<div style="text-align:center;padding:2rem 1rem;color:#bbb;font-size:14px">「<b>${esc(S.boardSrch)}</b>」に一致するスタッフが見つかりません</div>`;
+  } else {
+    h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 6px">検索結果 (${filtered.length}名)</div>`;
+    filtered.forEach(m=>{
+      const exCI=getCI(m.id);
+      const alreadyHere=exCI&&exCI.station_code===code;
+      const boardedElse=exCI&&exCI.station_code!==code;
+      const assignedTo=getRosterStn(m.id);
+      const wrongStn=!rIds.includes(m.id)&&assignedTo&&assignedTo!==code;
+
+      if(alreadyHere){
+        h+=`<div style="background:#EAF3DE;border:1.5px solid #639922;border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:11px;color:#3B6D11;font-weight:700;margin-bottom:3px">✅ 乗車済み</div>
+          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
+          <button onclick="doCheckIn('${code}',${m.id})" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #639922;background:#f5f5f0;font-size:13px;color:#3B6D11;font-weight:600">↩ 取り消し</button>
+        </div>`;
+      }else if(boardedElse){
+        const wCfg=STN[exCI.station_code];
+        h+=`<div style="background:#FFF8E6;border:1.5px solid #F5A623;border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">⚠️ 別のステーションで乗車済み</div>
+          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
+          <div style="font-size:12px;color:#A0650A;margin-top:3px">→ ${wCfg.emoji} ${esc(getStn(exCI.station_code).name)}</div>
+        </div>`;
+      }else if(wrongStn){
+        const oCfg=STN[assignedTo];
+        h+=`<div style="background:#FFF8E6;border:1.5px solid #F5A623;border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">⚠️ 別ステーション割り当て</div>
+          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
+          <div style="font-size:12px;color:#A0650A;margin-top:3px">→ ${oCfg.emoji} ${esc(getStn(assignedTo).name)} に割り当て</div>
+          <button onclick="overrideCheckIn('${code}',${m.id},'${m.real_name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")} ')" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #F5A623;background:#FFF8E6;font-size:13px;color:#A0650A;font-weight:600">⚡ 例外として乗車許可</button>
+        </div>`;
+      }else if(!full){
+        h+=`<button onclick="doCheckIn('${code}',${m.id})" style="width:100%;background:${cfg.bg};border:2px solid ${cfg.bd};border-radius:10px;padding:14px;margin-bottom:8px;text-align:left;display:flex;align-items:center;gap:12px">
+          <div style="flex:1">
+            <div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div>
+          </div>
+          <div style="width:46px;height:46px;border-radius:10px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="color:white;font-size:24px;font-weight:800">✓</span>
+          </div>
+        </button>`;
+      }else{
+        h+=`<div style="background:${cfg.bg};border:1.5px solid ${cfg.bd};border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div>
+          <div style="font-size:12px;color:#A32D2D;margin-top:4px;font-weight:700">満席のため乗車不可</div>
+        </div>`;
+      }
+    });
   }
-  h+=`</div>${numPad()}<div style="height:2rem"></div></div>`;
+
+  h+=`</div><div style="height:2rem"></div></div>`;
   return h;
 }
 
+/* ===== HISTORY ===== */
 function scrHistory(){
-  const s=S.ht,col=COL[s],stn=getStn(s);
-  const rIds=stnRoster(s),ciIds=stnCI(s);
+  const code=S.ht,cfg=STN[code],stn=getStn(code);
+  const rIds=stnRoster(code),ciIds=stnCI(code);
   const boarded=rIds.filter(id=>ciIds.includes(id));
   const missed=rIds.filter(id=>!ciIds.includes(id));
   const wrongPpl=missed.filter(id=>getCI(id)!==undefined);
@@ -468,92 +451,86 @@ function scrHistory(){
   const card=(id,type)=>{
     const m=getStaff(id),ci=getCI(id);if(!m)return'';
     if(type==='wrong'&&ci){
-      const wc=COL[ci.station_code];
+      const wCfg=STN[ci.station_code]||STN.A;
       return`<div style="padding:10px 0;border-bottom:1px solid rgba(245,166,35,.25)">
-        <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:32px;height:32px;border-radius:8px;background:#F5A623;display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:12px;font-weight:800">${m.badge_number}</span></div>
-          <div style="flex:1">
-            <div style="font-size:15px;color:#1a1a1a;font-weight:600">${esc(m.real_name)}</div>
-            ${m.facebook_name?`<div style="font-size:12px;color:#A0650A">fb: ${esc(m.facebook_name)}</div>`:''}
-            <div style="font-size:12px;color:#A0650A;margin-top:2px">→ boarded at <span style="background:${wc.bg};color:${wc.dk};padding:1px 7px;border-radius:3px;font-weight:700">${wc.lbl} ${esc(getStn(ci.station_code).name)}</span></div>
-          </div>
-        </div>
+        <div style="font-size:15px;font-weight:600;color:#1a1a1a">${esc(m.real_name)}</div>
+        ${m.facebook_name?`<div style="font-size:12px;color:#A0650A">fb: ${esc(m.facebook_name)}</div>`:''}
+        <div style="font-size:12px;color:#A0650A;margin-top:2px">→ ${wCfg.emoji} ${esc(getStn(ci.station_code).name)} で乗車</div>
       </div>`;
     }
-    const bg=type==='boarded'?col.bd:'#ccc';
-    return`<div style="display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid #f0f0ec${type==='noshow'?';opacity:.7':''}">
-      <div style="width:34px;height:34px;border-radius:8px;background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:12px;font-weight:800">${m.badge_number}</span></div>
-      <div style="flex:1">
-        <div style="font-size:15px;color:${type==='noshow'?'#888':'#1a1a1a'};font-weight:500">${esc(m.real_name)}</div>
-        ${m.facebook_name?`<div style="font-size:12px;color:${type==='noshow'?'#bbb':'#aaa'}">fb: ${esc(m.facebook_name)}</div>`:''}
-      </div>
+    return`<div style="padding:10px 0;border-bottom:1px solid #f0f0ec${type==='noshow'?';opacity:.65':''}">
+      <div style="font-size:15px;font-weight:500;color:${type==='noshow'?'#888':'#1a1a1a'}">${esc(m.real_name)}</div>
+      ${m.facebook_name?`<div style="font-size:12px;color:${type==='noshow'?'#bbb':'#aaa'}">fb: ${esc(m.facebook_name)}</div>`:''}
     </div>`;
   };
 
   let h=`<div>
-    <div style="background:${col.bg};padding:1rem 1.1rem 0.875rem;border-bottom:1px solid ${col.bd}">
+    <div style="background:${cfg.bg};padding:1rem 1.1rem 0.875rem;border-bottom:1px solid ${cfg.bd}">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <button class="bk" onclick="set({screen:'board',as:'${s}',input:''})" style="color:${col.tx}">←</button>
-        <span style="font-size:17px;font-weight:700;color:${col.dk};flex:1">${esc(stn.name)} — Status</span>
+        <button class="bk" onclick="set({screen:'board',as:'${code}',boardSrch:''})" style="color:${cfg.tx}">←</button>
+        <span style="font-size:17px;font-weight:700;color:${cfg.dk};flex:1">${cfg.emoji} ${esc(stn.name)}</span>
       </div>
       <div style="display:flex;gap:8px">
-        <div style="flex:1;background:${col.bg};border:1px solid ${col.bd};border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:9px;color:${col.tx};font-weight:700">✅ BOARDED</div>
-          <div style="font-size:22px;font-weight:800;color:${col.dk}">${boarded.length}</div>
+        <div style="flex:1;background:${cfg.bg};border:1px solid ${cfg.bd};border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:9px;color:${cfg.tx};font-weight:700">✅ 乗車済み</div>
+          <div style="font-size:22px;font-weight:800;color:${cfg.dk}">${boarded.length}</div>
         </div>
         <div style="flex:1;background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:9px;color:#A0650A;font-weight:700">⚠️ WRONG BUS</div>
+          <div style="font-size:9px;color:#A0650A;font-weight:700">⚠️ 誤乗車</div>
           <div style="font-size:22px;font-weight:800;color:#A0650A">${wrongPpl.length}</div>
         </div>
         <div style="flex:1;background:#f5f5f0;border:1px solid #ddd;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:9px;color:#888;font-weight:700">❌ NO SHOW</div>
+          <div style="font-size:9px;color:#888;font-weight:700">❌ 未乗車</div>
           <div style="font-size:22px;font-weight:800;color:#888">${noShow.length}</div>
         </div>
       </div>
     </div>
     <div style="padding:1rem">`;
 
-  if(boarded.length>0){h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.5px;font-weight:700;margin-bottom:6px">✅ BOARDED (${boarded.length})</div>`;boarded.forEach(id=>{h+=card(id,'boarded');});}
+  if(boarded.length>0){h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.5px;font-weight:700;margin-bottom:6px">✅ 乗車済み (${boarded.length}名)</div>`;boarded.forEach(id=>{h+=card(id,'boarded');});}
   if(wrongPpl.length>0){
-    h+=`<div style="font-size:10px;color:#A0650A;letter-spacing:.5px;font-weight:700;margin:14px 0 4px">⚠️ WRONG STATION (${wrongPpl.length})</div><div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:10px;padding:0 10px;margin-bottom:4px">`;
+    h+=`<div style="font-size:10px;color:#A0650A;letter-spacing:.5px;font-weight:700;margin:14px 0 4px">⚠️ 誤ステーションで乗車 (${wrongPpl.length}名)</div>
+      <div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:10px;padding:0 10px;margin-bottom:4px">`;
     wrongPpl.forEach(id=>{h+=card(id,'wrong');});h+=`</div>`;
   }
   if(noShow.length>0){
-    h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;margin:14px 0 4px">❌ DID NOT BOARD (${noShow.length})</div><div style="background:#f5f5f0;border:1px solid #e0e0dc;border-radius:10px;padding:0 10px;margin-bottom:4px">`;
+    h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;margin:14px 0 4px">❌ 未乗車 (${noShow.length}名)</div>
+      <div style="background:#f5f5f0;border:1px solid #e0e0dc;border-radius:10px;padding:0 10px;margin-bottom:4px">`;
     noShow.forEach(id=>{h+=card(id,'noshow');});h+=`</div>`;
   }
-  if(rIds.length===0)h+=`<p style="color:#ccc;font-size:13px;text-align:center;padding:2rem">No staff assigned today.</p>`;
+  if(rIds.length===0)h+=`<p style="color:#ccc;font-size:13px;text-align:center;padding:2rem">本日このステーションにスタッフが割り当てられていません。</p>`;
 
-  h+=`</div><div style="padding:0 1rem 2.5rem"><button onclick="resetCI('${s}')" style="width:100%;padding:11px;border-radius:9px;border:1px solid #ddd;background:#f7f7f5;font-size:13px;color:#888">🔄 Reset check-ins for this station</button></div></div>`;
+  h+=`</div><div style="padding:0 1rem 2.5rem">
+    <button onclick="resetCI('${code}')" style="width:100%;padding:11px;border-radius:9px;border:1px solid #ddd;background:#f7f7f5;font-size:13px;color:#888">🔄 このステーションのチェックインをリセット</button>
+  </div></div>`;
   return h;
 }
 
+/* ===== REPORT ===== */
 function scrReport(){
   let tB=0,tS=0,tW=0,tN=0;
   let h=`<div>
     <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4">
       <button class="bk" onclick="set({screen:'home'})">←</button>
       <div style="flex:1">
-        <div style="font-size:17px;font-weight:700;color:#1a1a1a">📋 Attendance Report</div>
+        <div style="font-size:17px;font-weight:700;color:#1a1a1a">📋 出勤レポート</div>
         <div style="font-size:11px;color:#aaa">${todayLbl()}</div>
       </div>
       <button onclick="exportCSV()" style="background:#555;border:none;border-radius:8px;padding:8px 10px;color:white;font-size:12px;font-weight:700">⬇️ CSV</button>
     </div>
-
-    <!-- Push to Sheets -->
     <div style="padding:10px 1rem;background:#f7f7f5;border-bottom:1px solid #e8e8e4;display:flex;align-items:center;gap:10px">
       <div style="flex:1">
-        <div style="font-size:13px;font-weight:600;color:#1a1a1a">Push to Google Sheets</div>
-        <div style="font-size:11px;color:#aaa">Saves to Boarding Log, Exceptions & Summary tabs</div>
+        <div style="font-size:13px;font-weight:600;color:#1a1a1a">Google Sheets に送信</div>
+        <div style="font-size:11px;color:#aaa">Boarding Log・Exceptions・Summary タブに保存</div>
       </div>
       <button onclick="pushToSheets()" style="padding:8px 14px;border-radius:8px;border:none;background:${S.pushing?'#aaa':'#217346'};color:white;font-size:13px;font-weight:700;white-space:nowrap" ${S.pushing?'disabled':''}>
-        ${S.pushing?'Pushing...':'📤 Push'}
+        ${S.pushing?'送信中...':'📤 送信'}
       </button>
     </div>`;
 
-  ['A','B','C'].forEach(s=>{
-    const col=COL[s],stn=getStn(s);
-    const rIds=stnRoster(s),ciIds=stnCI(s);
+  CODES.forEach(code=>{
+    const cfg=STN[code],stn=getStn(code);
+    const rIds=stnRoster(code),ciIds=stnCI(code);
     const boarded=rIds.filter(id=>ciIds.includes(id));
     const missed=rIds.filter(id=>!ciIds.includes(id));
     const wrongSt=missed.filter(id=>getCI(id)!==undefined);
@@ -562,44 +539,47 @@ function scrReport(){
 
     h+=`<div style="padding:1rem;border-bottom:1px solid #f0f0ec">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:7px">
-          <span style="font-size:15px;font-weight:700;color:${col.dk}">${esc(stn.name)}</span>
-          <span style="font-size:11px;color:${col.tx};background:${col.bg};padding:2px 7px;border-radius:4px;border:1px solid ${col.bd}">${col.lbl}</span>
-        </div>
-        <span style="font-size:15px;font-weight:700;color:${col.dk}">${boarded.length}/${rIds.length}</span>
+        <span style="font-size:15px;font-weight:700;color:${cfg.dk}">${cfg.emoji} ${esc(stn.name)}</span>
+        <span style="font-size:15px;font-weight:700;color:${cfg.dk}">${boarded.length}/${rIds.length}</span>
       </div>`;
 
     if(boarded.length>0){
-      h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.4px;font-weight:700;margin-bottom:6px">✅ BOARDED (${boarded.length})</div><div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">`;
-      boarded.forEach(id=>{const m=getStaff(id);if(m)h+=`<div style="background:${col.bg};border:1px solid ${col.bd};padding:5px 10px;border-radius:10px;font-size:12px"><b style="color:${col.dk}">#${m.badge_number} ${esc(m.real_name)}</b>${m.facebook_name?`<span style="color:${col.tx}"> · ${esc(m.facebook_name)}</span>`:''}</div>`;});
+      h+=`<div style="font-size:10px;color:#3B6D11;font-weight:700;margin-bottom:6px">✅ 乗車済み (${boarded.length}名)</div><div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">`;
+      boarded.forEach(id=>{const m=getStaff(id);if(m)h+=`<span style="background:${cfg.bg};border:1px solid ${cfg.bd};padding:5px 10px;border-radius:20px;font-size:12px;color:${cfg.dk};font-weight:600">${esc(m.real_name)}</span>`;});
       h+=`</div>`;
     }
     if(wrongSt.length>0){
-      h+=`<div style="font-size:10px;color:#A0650A;letter-spacing:.4px;font-weight:700;margin-bottom:6px">⚠️ WRONG STATION (${wrongSt.length})</div>`;
-      wrongSt.forEach(id=>{const m=getStaff(id),ci=getCI(id);if(!m||!ci)return;const wc=COL[ci.station_code];h+=`<div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:7px 10px;margin-bottom:5px;font-size:13px"><b style="color:#1a1a1a">#${m.badge_number} ${esc(m.real_name)}</b>${m.facebook_name?`<span style="color:#A0650A"> · fb: ${esc(m.facebook_name)}</span>`:''} <span style="color:#A0650A">→ <b>${wc.lbl} ${esc(getStn(ci.station_code).name)}</b></span></div>`;});
+      h+=`<div style="font-size:10px;color:#A0650A;font-weight:700;margin-bottom:6px">⚠️ 誤ステーション (${wrongSt.length}名)</div>`;
+      wrongSt.forEach(id=>{
+        const m=getStaff(id),ci=getCI(id);if(!m||!ci)return;
+        const wCfg=STN[ci.station_code]||STN.A;
+        h+=`<div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:7px 10px;margin-bottom:5px;font-size:13px">
+          <b>${esc(m.real_name)}</b>${m.facebook_name?` · fb: ${esc(m.facebook_name)}`:''} → ${wCfg.emoji} ${esc(getStn(ci.station_code).name)}
+        </div>`;
+      });
     }
     if(noShow.length>0){
-      h+=`<div style="font-size:10px;color:#888;letter-spacing:.4px;font-weight:700;margin-bottom:6px">❌ NO SHOW (${noShow.length})</div><div style="display:flex;flex-wrap:wrap;gap:5px">`;
-      noShow.forEach(id=>{const m=getStaff(id);if(m)h+=`<div style="background:#f5f5f0;border:1px solid #e0e0dc;padding:5px 10px;border-radius:10px;font-size:12px"><span style="color:#888">#${m.badge_number} ${esc(m.real_name)}</span>${m.facebook_name?`<span style="color:#bbb"> · ${esc(m.facebook_name)}</span>`:''}</div>`;});
+      h+=`<div style="font-size:10px;color:#888;font-weight:700;margin-bottom:6px">❌ 未乗車 (${noShow.length}名)</div><div style="display:flex;flex-wrap:wrap;gap:5px">`;
+      noShow.forEach(id=>{const m=getStaff(id);if(m)h+=`<span style="background:#f5f5f0;border:1px solid #e0e0dc;padding:5px 10px;border-radius:20px;font-size:12px;color:#888">${esc(m.real_name)}${m.facebook_name?' · '+esc(m.facebook_name):''}</span>`;});
       h+=`</div>`;
     }
-    if(rIds.length===0)h+=`<p style="color:#ccc;font-size:13px">No staff assigned today.</p>`;
+    if(rIds.length===0)h+=`<p style="color:#ccc;font-size:13px">本日割り当てなし</p>`;
     h+=`</div>`;
   });
 
   h+=`<div style="padding:1rem 1rem 3rem">
     <div style="background:#f7f7f5;border-radius:12px;padding:1.25rem;text-align:center;margin-bottom:10px">
-      <div style="font-size:11px;color:#aaa;letter-spacing:.5px;font-weight:700">TOTAL BOARDED TODAY</div>
+      <div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:.5px">本日の合計乗車人数</div>
       <div style="font-size:52px;font-weight:800;color:#1a1a1a;line-height:1.1">${tB}</div>
-      <div style="font-size:13px;color:#aaa">out of ${tS} assigned</div>
+      <div style="font-size:13px;color:#aaa">${tS}名中</div>
     </div>
     <div style="display:flex;gap:8px">
       <div style="flex:1;background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:10px;color:#A0650A;font-weight:700">⚠️ WRONG BUS</div>
+        <div style="font-size:10px;color:#A0650A;font-weight:700">⚠️ 誤乗車</div>
         <div style="font-size:24px;font-weight:800;color:#A0650A">${tW}</div>
       </div>
       <div style="flex:1;background:#f5f5f0;border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:10px;color:#888;font-weight:700">❌ NO SHOW</div>
+        <div style="font-size:10px;color:#888;font-weight:700">❌ 未乗車</div>
         <div style="font-size:24px;font-weight:800;color:#888">${tN}</div>
       </div>
     </div>
@@ -607,75 +587,66 @@ function scrReport(){
   return h;
 }
 
+/* ===== ADMIN ===== */
 function scrAdmin(){
   const srch=S.sSrch.toLowerCase();
-  const filtered=S.data.staff.filter(m=>m.real_name.toLowerCase().includes(srch)||String(m.badge_number).includes(srch)||(m.facebook_name||'').toLowerCase().includes(srch));
+  const filtered=S.data.staff.filter(m=>m.real_name.toLowerCase().includes(srch)||(m.facebook_name||'').toLowerCase().includes(srch));
   let h=`<div>
     <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4">
       <button class="bk" onclick="set({screen:'home'})">←</button>
-      <span style="font-size:18px;font-weight:700;color:#1a1a1a">⚙️ Setup</span>
+      <span style="font-size:18px;font-weight:700;color:#1a1a1a">⚙️ 設定</span>
     </div>
 
-    <!-- Sync button -->
-    <div style="margin:1rem;background:#EAF3DE;border:1px solid #639922;border-radius:10px;padding:12px">
-      <div style="font-size:13px;font-weight:700;color:#3B6D11;margin-bottom:4px">📥 Sync Staff from Google Sheets</div>
-      <div style="font-size:12px;color:#639922;margin-bottom:8px">Add staff in your Google Sheet → tap Sync to import here automatically</div>
-      <button onclick="syncFromSheets()" style="width:100%;padding:10px;border-radius:8px;border:none;background:${S.syncing?'#aaa':'#217346'};color:white;font-size:14px;font-weight:700" ${S.syncing?'disabled':''}>${S.syncing?'Syncing...':'📥 Sync from Google Sheets'}</button>
-    </div>
-
-    <div style="padding:0 1rem;border-bottom:1px solid #f0f0ec;padding-bottom:1rem">
-      <div style="font-size:11px;color:#888;letter-spacing:.5px;font-weight:700;margin-bottom:10px">STATION SETTINGS</div>`;
-
-  ['A','B','C'].forEach(s=>{
-    const col=COL[s],stn=getStn(s);
-    h+=`<div style="background:${col.bg};border:1px solid ${col.bd};border-radius:10px;padding:10px 12px;margin-bottom:8px">
-      <div style="font-size:11px;color:${col.tx};font-weight:700;margin-bottom:6px">${col.lbl} PASS</div>
+    <!-- Station seat limits -->
+    <div style="padding:1rem;border-bottom:1px solid #f0f0ec">
+      <div style="font-size:11px;color:#888;font-weight:700;letter-spacing:.5px;margin-bottom:10px">座席数の設定</div>`;
+  CODES.forEach(code=>{
+    const cfg=STN[code],stn=getStn(code);
+    h+=`<div style="background:${cfg.bg};border:1px solid ${cfg.bd};border-radius:10px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:12px;color:${cfg.tx};font-weight:700;margin-bottom:6px">${cfg.emoji} ${esc(stn.name)}</div>
       <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" id="sn${s}" value="${esc(stn.name)}" onblur="updateStn('${s}')" style="flex:1;background:white;border-color:${col.bd}" />
-        <input type="number" id="sl${s}" value="${stn.seat_limit}" onblur="updateStn('${s}')" style="width:65px;background:white;border-color:${col.bd};text-align:center" />
-        <span style="font-size:11px;color:${col.tx};white-space:nowrap">seats</span>
+        <input type="text" id="sn${code}" value="${esc(stn.name)}" onblur="updateStn('${code}')" style="flex:1;background:white;border-color:${cfg.bd};font-size:14px" />
+        <input type="number" id="sl${code}" value="${stn.seat_limit}" onblur="updateStn('${code}')" style="width:65px;background:white;border-color:${cfg.bd};text-align:center" />
+        <span style="font-size:11px;color:${cfg.tx};white-space:nowrap">席</span>
       </div>
     </div>`;
   });
 
   h+=`</div>
+    <!-- Staff list -->
     <div style="padding:1rem">
-      <div style="font-size:11px;color:#888;letter-spacing:.5px;font-weight:700;margin-bottom:8px">MANUAL ADD STAFF (${S.data.staff.length} total)</div>
-      <div style="background:#f7f7f5;border:1px solid #e0e0dc;border-radius:10px;padding:12px;margin-bottom:12px">
-        <input type="text" id="anr" placeholder="Real name *" oninput="S.newRN=this.value" style="margin-bottom:7px" />
-        <input type="text" id="anf" placeholder="Facebook name" oninput="S.newFB=this.value" style="margin-bottom:8px" />
-        <button onclick="addStaff();document.getElementById('anr').value='';document.getElementById('anf').value=''" style="width:100%;padding:10px;border-radius:8px;border:none;background:#1a1a1a;color:white;font-size:14px;font-weight:700">+ Add Staff</button>
+      <div style="font-size:11px;color:#888;font-weight:700;letter-spacing:.5px;margin-bottom:8px">スタッフマスター (${S.data.staff.length}名)</div>
+      <div style="background:#EAF3DE;border:1px solid #639922;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#3B6D11">
+        💡 スタッフの追加・変更は Google Sheets の各ステーションタブで行い、「📥 同期」を押してください。
       </div>
-      <input type="text" placeholder="🔍 Search staff..." value="${esc(S.sSrch)}" oninput="set({sSrch:this.value})" style="margin-bottom:10px;background:#f7f7f5;border:1px solid #e0e0dc" />`;
+      <input type="text" placeholder="🔍 名前で検索..." value="${esc(S.sSrch)}" oninput="set({sSrch:this.value})" style="margin-bottom:10px;background:#f7f7f5;border:1px solid #e0e0dc" />`;
 
   if(S.data.staff.length===0){
-    h+=`<div style="border:1.5px dashed #ddd;border-radius:10px;padding:2rem;text-align:center;color:#bbb;font-size:13px">No staff yet.<br>Sync from Google Sheets or add manually above.</div>`;
+    h+=`<div style="border:1.5px dashed #ddd;border-radius:10px;padding:2rem;text-align:center;color:#bbb;font-size:13px">スタッフが登録されていません。<br>Google Sheets に名前を入力して同期してください。</div>`;
   }else if(filtered.length===0){
-    h+=`<div style="text-align:center;color:#bbb;font-size:13px;padding:1rem">No results</div>`;
+    h+=`<div style="text-align:center;color:#bbb;font-size:13px;padding:1rem">検索結果なし</div>`;
   }else{
     h+=`<div style="border:1px solid #e8e8e4;border-radius:10px;overflow:hidden">`;
     filtered.forEach((m,i)=>{
-      const asgn=getRosterStn(m.id),isEdit=S.editId===m.id;
+      const asgn=getRosterStn(m.id),cfg=asgn?STN[asgn]:null;
+      const isEdit=S.editId===m.id;
       if(isEdit){
         h+=`<div style="padding:12px;background:#f7f7f5;${i<filtered.length-1?'border-bottom:1px solid #e0e0dc':''}">
-          <div style="font-size:11px;color:#888;font-weight:700;margin-bottom:6px">EDITING #${m.badge_number}</div>
-          <input type="text" value="${esc(S.editRN)}" oninput="S.editRN=this.value" placeholder="Real name" style="margin-bottom:6px" />
-          <input type="text" value="${esc(S.editFB)}" oninput="S.editFB=this.value" placeholder="Facebook name" style="margin-bottom:8px" />
+          <div style="font-size:11px;color:#888;font-weight:700;margin-bottom:6px">編集中</div>
+          <input type="text" value="${esc(S.editRN)}" oninput="S.editRN=this.value" placeholder="本名" style="margin-bottom:6px" />
+          <input type="text" value="${esc(S.editFB)}" oninput="S.editFB=this.value" placeholder="Facebook名" style="margin-bottom:8px" />
           <div style="display:flex;gap:6px">
-            <button onclick="saveEdit()" style="flex:2;padding:9px;border-radius:7px;border:none;background:#1a1a1a;color:white;font-size:14px;font-weight:700">Save</button>
-            <button onclick="set({editId:null})" style="flex:1;padding:9px;border-radius:7px;border:1px solid #ddd;background:#f5f5f0;color:#666;font-size:13px">Cancel</button>
+            <button onclick="saveEdit()" style="flex:2;padding:9px;border-radius:7px;border:none;background:#1a1a1a;color:white;font-size:14px;font-weight:700">保存</button>
+            <button onclick="set({editId:null})" style="flex:1;padding:9px;border-radius:7px;border:1px solid #ddd;background:#f5f5f0;color:#666;font-size:13px">キャンセル</button>
           </div>
         </div>`;
       }else{
         h+=`<div style="display:flex;align-items:center;padding:10px 12px;${i<filtered.length-1?'border-bottom:1px solid #f0f0ec':''}">
-          <div style="width:32px;height:32px;border-radius:7px;background:${asgn?COL[asgn].bd:'#ddd'};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:10px">
-            <span style="color:white;font-size:12px;font-weight:800">${m.badge_number}</span>
-          </div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:14px;color:#1a1a1a;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.real_name)}</div>
-            <div style="font-size:12px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.facebook_name?'fb: '+esc(m.facebook_name):'<span style="color:#ddd">no facebook name</span>'}</div>
+            <div style="font-size:14px;color:#1a1a1a;font-weight:500">${esc(m.real_name)}</div>
+            <div style="font-size:12px;color:#aaa">${m.facebook_name?'fb: '+esc(m.facebook_name):'<span style="color:#ddd">Facebook名なし</span>'}</div>
           </div>
-          ${asgn?`<span style="font-size:10px;color:${COL[asgn].tx};background:${COL[asgn].bg};padding:2px 5px;border-radius:4px;border:1px solid ${COL[asgn].bd};margin:0 5px;white-space:nowrap">${COL[asgn].lbl}</span>`:''}
+          ${cfg?`<span style="font-size:10px;color:${cfg.tx};background:${cfg.bg};padding:2px 6px;border-radius:4px;border:1px solid ${cfg.bd};margin-right:6px;white-space:nowrap">${cfg.emoji}</span>`:''}
           <button onclick="set({editId:${m.id},editRN:'${m.real_name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}',editFB:'${(m.facebook_name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'})" style="background:none;border:none;font-size:17px;padding:3px 4px;color:#aaa">✏️</button>
           <button onclick="removeStaff(${m.id})" style="background:none;border:none;font-size:17px;padding:3px 4px;color:#E24B4A">🗑</button>
         </div>`;
@@ -683,64 +654,7 @@ function scrAdmin(){
     });
     h+=`</div>`;
   }
-  h+=`</div><div style="padding:0 1rem 3rem"><button onclick="set({screen:'roster',rSrch:''})" style="width:100%;padding:12px;border-radius:9px;border:none;background:#1a1a1a;color:white;font-size:14px;font-weight:700">📋 Set Today's Roster →</button></div></div>`;
-  return h;
-}
-
-function scrRoster(){
-  const srch=S.rSrch.toLowerCase();
-  const filtered=S.data.staff.filter(m=>m.real_name.toLowerCase().includes(srch)||String(m.badge_number).includes(srch)||(m.facebook_name||'').toLowerCase().includes(srch));
-  let h=`<div>
-    <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4;background:#fff;position:sticky;top:0;z-index:10">
-      <button class="bk" onclick="set({screen:'home'})">←</button>
-      <div style="flex:1">
-        <div style="font-size:17px;font-weight:700;color:#1a1a1a">Today's Roster</div>
-        <div style="font-size:12px;color:#aaa">${todayLbl()} · ${S.data.roster.length} assigned</div>
-      </div>
-      <button onclick="set({screen:'home'})" style="background:#1a1a1a;border:none;border-radius:8px;padding:8px 14px;color:white;font-size:13px;font-weight:700">Done ✓</button>
-    </div>
-    <div style="display:flex;gap:6px;padding:10px 1rem;background:#f7f7f5;border-bottom:1px solid #e8e8e4">`;
-
-  ['A','B','C'].forEach(s=>{
-    const col=COL[s],cnt=stnRoster(s).length;
-    h+=`<div style="flex:1;background:${col.bg};border:1px solid ${col.bd};border-radius:8px;padding:7px;text-align:center">
-      <div style="font-size:10px;color:${col.tx};font-weight:700">${esc(getStn(s).name)}</div>
-      <div style="font-size:20px;font-weight:800;color:${col.dk}">${cnt}</div>
-    </div>`;
-  });
-
-  h+=`</div>
-    <div style="padding:10px 1rem">
-      <input type="text" placeholder="🔍 Search by name, badge no, or Facebook name..." value="${esc(S.rSrch)}" oninput="set({rSrch:this.value})" style="background:#f7f7f5;border:1px solid #e0e0dc" />
-    </div>
-    <div style="padding:0 1rem">`;
-
-  if(S.data.staff.length===0){
-    h+=`<div style="text-align:center;padding:3rem 1rem;color:#bbb;font-size:14px">No staff yet.<br>Sync from Google Sheets first.</div>`;
-  }else if(filtered.length===0){
-    h+=`<div style="text-align:center;padding:2rem 1rem;color:#bbb;font-size:14px">No results</div>`;
-  }else{
-    filtered.forEach(m=>{
-      const asgn=getRosterStn(m.id);
-      h+=`<div style="padding:11px 0;border-bottom:1px solid #f0f0ec">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <div style="width:32px;height:32px;border-radius:8px;background:${asgn?COL[asgn].bd:'#ddd'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <span style="color:white;font-size:12px;font-weight:800">${m.badge_number}</span>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:15px;font-weight:600;color:#1a1a1a">${esc(m.real_name)}</div>
-            ${m.facebook_name?`<div style="font-size:12px;color:#aaa">fb: ${esc(m.facebook_name)}</div>`:''}
-          </div>
-          ${asgn?`<span style="font-size:11px;color:${COL[asgn].tx};background:${COL[asgn].bg};padding:2px 7px;border-radius:4px;border:1px solid ${COL[asgn].bd};font-weight:700;white-space:nowrap">${COL[asgn].lbl}</span>`:'<span style="font-size:12px;color:#bbb">Off</span>'}
-        </div>
-        <div style="display:flex;gap:5px">
-          ${['A','B','C'].map(s=>{const col=COL[s],active=asgn===s;return`<button onclick="assignStation(${m.id},'${s}')" style="flex:1;padding:7px 3px;border-radius:8px;border:${active?`2px solid ${col.bd}`:`1px solid ${col.bd}`};background:${active?col.bd:col.bg};color:${active?'white':col.dk};font-size:11px;font-weight:${active?700:500}">${active?'✓ ':''}${esc(getStn(s).name)}</button>`;}).join('')}
-          <button onclick="assignStation(${m.id},'none')" style="flex:1;padding:7px 3px;border-radius:8px;border:1px solid #ddd;background:${!asgn?'#555':'#f5f5f0'};color:${!asgn?'white':'#aaa'};font-size:11px;font-weight:${!asgn?700:400}">${!asgn?'✓ ':''}Off</button>
-        </div>
-      </div>`;
-    });
-  }
-  h+=`</div><div style="height:3rem"></div></div>`;
+  h+=`</div><div style="height:2rem"></div></div>`;
   return h;
 }
 
@@ -748,24 +662,22 @@ function scrRoster(){
 function render(){
   const app=document.getElementById('app');
   switch(S.screen){
-    case 'loading': app.innerHTML=scrLoading(); break;
-    case 'error':   app.innerHTML=scrError();   break;
+    case 'loading': app.innerHTML='<div style="padding:4rem;text-align:center;color:#aaa"><div style="font-size:40px;margin-bottom:1rem">🚌</div><div>接続中...</div></div>'; break;
+    case 'error':   app.innerHTML='<div style="padding:3rem;text-align:center"><div style="font-size:36px;margin-bottom:1rem">⚠️</div><div style="font-size:16px;color:#A32D2D;margin-bottom:1rem">接続できませんでした</div><button onclick="loadAll()" style="padding:10px 20px;border-radius:8px;border:none;background:#1a1a1a;color:white;font-size:14px">再試行</button></div>'; break;
     case 'home':    app.innerHTML=scrHome();    break;
     case 'board':   app.innerHTML=scrBoard();   break;
     case 'history': app.innerHTML=scrHistory(); break;
     case 'report':  app.innerHTML=scrReport();  break;
     case 'admin':   app.innerHTML=scrAdmin();   break;
-    case 'roster':  app.innerHTML=scrRoster();  break;
     default:        app.innerHTML=scrHome();
   }
-  // Toast overlay
   if(S.toast){
-    const t=document.createElement('div');
-    t.className='toast';t.textContent=S.toast;
-    document.body.appendChild(t);
+    const t=document.createElement('div');t.className='toast';t.textContent=S.toast;document.body.appendChild(t);
   }else{
     document.querySelectorAll('.toast').forEach(t=>t.remove());
   }
+  // Auto-focus search box on board screen
+  if(S.screen==='board'){const el=document.getElementById('bsrch');if(el)setTimeout(()=>el.focus(),100);}
 }
 
 loadAll();
