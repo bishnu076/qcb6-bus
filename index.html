@@ -443,7 +443,17 @@ function scrBoard(){
   const ciIds=stnCI(code),cnt=ciIds.length,rem=stn.seat_limit-cnt,full=rem<=0;
   const rIds=stnRoster(code),srch=(S.boardSrch||'').trim().toLowerCase();
   const rosterStaff=S.data.staff.filter(m=>rIds.includes(m.id));
-  const filtered=srch?rosterStaff.filter(m=>m.real_name.toLowerCase().includes(srch)):[];
+  // Smart search: 1-2 chars = match word start only | 3+ chars = match anywhere
+  const filtered=srch?rosterStaff.filter(m=>{
+    const name=m.real_name.toLowerCase();
+    if(srch.length<=2){
+      // Match only if any WORD in the name starts with the search
+      return name.split(' ').some(word=>word.startsWith(srch));
+    }else{
+      // 3+ chars: match anywhere in the full name
+      return name.includes(srch);
+    }
+  }):[];
 
   let h=`<div>
     <div style="background:${cfg.bd};padding:1rem 1.1rem 0.9rem">
