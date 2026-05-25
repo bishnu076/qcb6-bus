@@ -310,6 +310,15 @@ async function overrideCheckIn(stnCode,staffId){
   if(!confirm(t('confirmOverride')+(m?' ('+m.real_name+')':'')))return;
   await doCheckIn(stnCode,staffId);
 }
+async function clearStationColors(){
+  if(!confirm('Clear yesterday\'s colors from Google Sheets station tabs?'))return;
+  toast('🎨 Clearing colors...',8000);
+  try{
+    await fetch(SCRIPT_URL,{method:'POST',mode:'no-cors',body:JSON.stringify({action:'clear_colors'})});
+    toast('✅ Colors cleared! Sheet is ready for today.',4000);
+  }catch(e){toast('❌ Failed: '+e.message,4000);}
+}
+
 async function resetAllCI(){
   if(!confirm('Reset ALL check-ins for today? This cannot be undone.'))return;
   const ids=S.data.checkins.map(c=>c.id);
@@ -685,6 +694,9 @@ function scrAdmin(){
           🔄 Clear Roster<br><span style="font-size:11px;font-weight:400">ロスターをクリア</span>
         </button>
       </div>
+      <button onclick="clearStationColors()" style="width:100%;margin-top:8px;padding:10px;border-radius:9px;border:1.5px solid #378ADD;background:#E6F1FB;color:#185FA5;font-size:13px;font-weight:700">
+        🎨 Clear Yesterday's Colors from Google Sheets<br><span style="font-size:11px;font-weight:400">前日の色をシートから削除する</span>
+      </button>
       <div style="font-size:11px;color:#aaa;margin-top:8px;text-align:center">Tomorrow's data resets automatically · 翌日は自動リセット</div>
     </div>
 
