@@ -23,7 +23,7 @@ button{font-family:inherit;cursor:pointer}
 const SURL='https://rfgahqjayrvrhgebdmdw.supabase.co';
 const SKEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmZ2FocWpheXJ2cmhnZWJkbWR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzQwNjQsImV4cCI6MjA5NTIxMDA2NH0.XJCYWDIDxdtZxMW1Y9GwkJKhEdRhGylfui-h544d3zs';
 const SHEET_ID='1SMbxwo9VtF44_kFApGM45v-izNG8KkvW2Dc9GNsptkc';
-const SCRIPT_URL='https://script.google.com/macros/s/AKfycbypVmeVyIbvob7epqDs2dNgR3amXx4C7P8T49bdkmOmlAq1AYe87wEA3WInyU9SdP0e3g/exec';
+const SCRIPT_URL='https://script.google.com/macros/s/AKfycbzj1ByQlxWL3Sqb3ujJoYicAM3EQETDSMreQ9lfvbtwbLvX8P_hbA04S3rjOQI3mlgK9g/exec';
 const sb=supabase.createClient(SURL,SKEY);
 
 const STN={
@@ -254,6 +254,12 @@ async function syncFromSheets(){
 }
 
 /* ===== NOTICES ===== */
+async function refreshNotices(){
+  await reloadNotices();
+  render();
+  toast('🔄 Refreshed',1200);
+}
+
 async function postNotice(){
   const msg=S.noticeText.trim();if(!msg)return;
   const{data}=await sb.from('notices').insert({message:msg}).select().single();
@@ -387,9 +393,12 @@ function scrHome(){
   h+=`<div style="margin-bottom:12px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div style="font-size:12px;font-weight:700;color:#555">${t('notices')}</div>
-      <button onclick="set({showNoticeInput:!S.showNoticeInput,noticeText:''})" style="background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;color:#555">
-        ${S.showNoticeInput?t('noticeCancel'):t('noticePost')}
-      </button>
+      <div style="display:flex;gap:6px">
+        <button onclick="refreshNotices()" style="background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;color:#555" title="Refresh">🔄</button>
+        <button onclick="set({showNoticeInput:!S.showNoticeInput,noticeText:''})" style="background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;color:#555">
+          ${S.showNoticeInput?t('noticeCancel'):t('noticePost')}
+        </button>
+      </div>
     </div>`;
   if(S.showNoticeInput){
     h+=`<div style="background:#fffdf0;border:1.5px solid #F5A623;border-radius:10px;padding:10px;margin-bottom:8px">
