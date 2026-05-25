@@ -23,7 +23,7 @@ button{font-family:inherit;cursor:pointer}
 const SURL='https://rfgahqjayrvrhgebdmdw.supabase.co';
 const SKEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmZ2FocWpheXJ2cmhnZWJkbWR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzQwNjQsImV4cCI6MjA5NTIxMDA2NH0.XJCYWDIDxdtZxMW1Y9GwkJKhEdRhGylfui-h544d3zs';
 const SHEET_ID='1SMbxwo9VtF44_kFApGM45v-izNG8KkvW2Dc9GNsptkc';
-const SCRIPT_URL='https://script.google.com/macros/s/AKfycbzj1ByQlxWL3Sqb3ujJoYicAM3EQETDSMreQ9lfvbtwbLvX8P_hbA04S3rjOQI3mlgK9g/exec';
+const SCRIPT_URL='https://script.google.com/macros/s/AKfycbzG_L_Ks_3pzCVvzC7u03RXHr-HhYvgbj_Wlv8_jLvWlYcs8gXzAKJAmFkSqp5FnyXECw/exec';
 const sb=supabase.createClient(SURL,SKEY);
 
 const STN={
@@ -314,7 +314,7 @@ async function clearStationColors(){
   if(!confirm('Clear yesterday\'s colors from Google Sheets station tabs?'))return;
   toast('🎨 Clearing colors...',8000);
   try{
-    await fetch(SCRIPT_URL,{method:'POST',mode:'no-cors',body:JSON.stringify({action:'clear_colors'})});
+    await fetch(SCRIPT_URL+'?action=clear_colors',{mode:'no-cors'});
     toast('✅ Colors cleared! Sheet is ready for today.',4000);
   }catch(e){toast('❌ Failed: '+e.message,4000);}
 }
