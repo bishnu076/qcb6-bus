@@ -310,6 +310,24 @@ async function overrideCheckIn(stnCode,staffId){
   if(!confirm(t('confirmOverride')+(m?' ('+m.real_name+')':'')))return;
   await doCheckIn(stnCode,staffId);
 }
+async function resetAllCI(){
+  if(!confirm('Reset ALL check-ins for today? This cannot be undone.'))return;
+  const ids=S.data.checkins.map(c=>c.id);
+  if(ids.length>0)await sb.from('checkins').delete().in('id',ids);
+  S.data.checkins=[];
+  toast('✅ All check-ins reset',2000);
+  render();
+}
+
+async function resetAllRoster(){
+  if(!confirm('Clear today\'s roster? You will need to sync again.'))return;
+  const ids=S.data.roster.map(r=>r.id);
+  if(ids.length>0)await sb.from('roster').delete().in('id',ids);
+  S.data.roster=[];
+  toast('✅ Roster cleared',2000);
+  render();
+}
+
 async function resetCI(stnCode){
   const stn=getStn(stnCode);
   if(!confirm(stn.name+' '+t('confirReset')))return;
@@ -656,6 +674,20 @@ function scrAdmin(){
       <span style="font-size:18px;font-weight:700;color:#1a1a1a;flex:1">${t('adminTitle')}</span>
       ${langBtn()}
     </div>
+    <!-- Reset section -->
+    <div style="padding:1rem;border-bottom:1px solid #f0f0ec;background:#fafafa">
+      <div style="font-size:11px;color:#888;font-weight:700;letter-spacing:.5px;margin-bottom:8px">RESET / リセット</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="resetAllCI()" style="flex:1;padding:10px;border-radius:9px;border:1.5px solid #E24B4A;background:#FDECEA;color:#A32D2D;font-size:13px;font-weight:700">
+          🗑 Reset All Check-ins<br><span style="font-size:11px;font-weight:400">全乗車記録をリセット</span>
+        </button>
+        <button onclick="resetAllRoster()" style="flex:1;padding:10px;border-radius:9px;border:1.5px solid #F5A623;background:#FFF8E6;color:#A0650A;font-size:13px;font-weight:700">
+          🔄 Clear Roster<br><span style="font-size:11px;font-weight:400">ロスターをクリア</span>
+        </button>
+      </div>
+      <div style="font-size:11px;color:#aaa;margin-top:8px;text-align:center">Tomorrow's data resets automatically · 翌日は自動リセット</div>
+    </div>
+
     <div style="padding:1rem;border-bottom:1px solid #f0f0ec">
       <div style="font-size:11px;color:#888;font-weight:700;letter-spacing:.5px;margin-bottom:4px">${t('seatTitle').toUpperCase()}</div>
       <div style="font-size:12px;color:#aaa;margin-bottom:10px">${t('seatSub')}</div>`;
