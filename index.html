@@ -483,8 +483,8 @@ function scrBoard(){
       <div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:.5px;margin-bottom:6px">${t('searchLabel')}</div>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="text" id="bsrch" placeholder="${t('searchPH')}" value="${esc(S.boardSrch)}"
-          oninput="set({boardSrch:this.value})"
-          autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false"
+          oninput="updateBoardSrch(this.value,'${code}')"
+          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
           style="flex:1;font-size:18px;font-weight:600;padding:12px 14px;border-radius:10px;border:2px solid ${cfg.bd};text-transform:uppercase" autofocus />
         ${S.boardSrch?`<button onclick="set({boardSrch:''})" style="padding:11px 14px;border-radius:10px;border:1px solid #ddd;background:#f5f5f0;font-size:16px;color:#888">✕</button>`:''}
       </div>
@@ -496,69 +496,8 @@ function scrBoard(){
     const active=S.boardSrch.toUpperCase()===l;
     h+=`<button onclick="set({boardSrch:'${l}'})" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid ${has?cfg.bd:'#e8e8e8'};background:${active?cfg.bd:(has?cfg.bg:'#f7f7f5')};color:${active?'white':(has?cfg.dk:'#ccc')};font-size:12px;font-weight:700;margin-right:3px">${l}</button>`;
   });
-  h+=`</div><div style="padding:0 1rem;overflow-y:auto;max-height:calc(100vh - 360px)">`;
+  h+=`</div><div id="boardResults" style="padding:0 1rem;overflow-y:auto;max-height:calc(100vh - 360px)">${buildBoardResults(code)}`;
 
-  if(!srch){
-    const waiting=rosterStaff.filter(m=>!ciIds.includes(m.id));
-    const boardedList=rosterStaff.filter(m=>ciIds.includes(m.id));
-    if(rosterStaff.length===0){
-      h+=`<div style="text-align:center;padding:3rem 1rem;color:#bbb;font-size:14px">${t('noStaffSync')}</div>`;
-    }else{
-      if(waiting.length>0){
-        h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 4px">${t('waitingLabel')} (${waiting.length}) — ${t('typeSearch')}</div>`;
-        waiting.forEach(m=>{h+=`<div style="padding:11px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px"><div style="flex:1"><div style="font-size:16px;font-weight:500;color:#555">${esc(m.real_name)}</div></div><div style="width:28px;height:28px;border-radius:6px;border:2px solid #ddd;flex-shrink:0"></div></div>`;});
-      }
-      if(boardedList.length>0){
-        h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.5px;font-weight:700;padding:12px 0 4px">✅ ${t('boardedLabel')} (${boardedList.length})</div>`;
-        boardedList.forEach(m=>{h+=`<div style="padding:9px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px;opacity:.5"><div style="flex:1"><div style="font-size:15px;color:#888;text-decoration:line-through">${esc(m.real_name)}</div></div><div style="width:28px;height:28px;border-radius:6px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:15px">✓</span></div></div>`;});
-      }
-    }
-  }else if(filtered.length===0){
-    h+=`<div style="text-align:center;padding:2rem 1rem;color:#bbb;font-size:14px">${t('noMatch')} "<b>${esc(S.boardSrch)}</b>"<br><span style="font-size:12px">${t('tryOther')}</span></div>`;
-  }else{
-    h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 6px">${t('results')} (${filtered.length})</div>`;
-    filtered.forEach(m=>{
-      const exCI=getCI(m.id);
-      const alreadyHere=exCI&&exCI.station_code===code;
-      const boardedElse=exCI&&exCI.station_code!==code;
-      const assignedTo=getRosterStn(m.id);
-      const wrongStn=!rIds.includes(m.id)&&assignedTo&&assignedTo!==code;
-      if(alreadyHere){
-        h+=`<div style="background:#EAF3DE;border:1.5px solid #639922;border-radius:10px;padding:12px 14px;margin-bottom:8px">
-          <div style="font-size:11px;color:#3B6D11;font-weight:700;margin-bottom:3px">${t('alreadyHere')}</div>
-          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
-          <button onclick="doCheckIn('${code}',${m.id})" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #639922;background:#f5f5f0;font-size:13px;color:#3B6D11;font-weight:600">${t('undo')}</button>
-        </div>`;
-      }else if(boardedElse){
-        const wCfg=STN[exCI.station_code]||STN.A;
-        h+=`<div style="background:#FFF8E6;border:1.5px solid #F5A623;border-radius:10px;padding:12px 14px;margin-bottom:8px">
-          <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">${t('alreadyElse')}</div>
-          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
-          <div style="font-size:12px;color:#A0650A;margin-top:3px">→ ${wCfg.emoji} ${esc(wCfg.name)}</div>
-        </div>`;
-      }else if(wrongStn){
-        const oCfg=STN[assignedTo]||STN.A;
-        h+=`<div style="background:#FFF8E6;border:1.5px solid #F5A623;border-radius:10px;padding:12px 14px;margin-bottom:8px">
-          <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">${t('wrongStn')}</div>
-          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
-          <div style="font-size:12px;color:#A0650A;margin-top:3px">${t('assignedTo')} ${oCfg.emoji} ${esc(oCfg.name)}</div>
-          <button onclick="overrideCheckIn('${code}',${m.id},'${m.real_name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")} ')" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #F5A623;background:#FFF8E6;font-size:13px;color:#A0650A;font-weight:600">${t('override')}</button>
-        </div>`;
-      }else if(!full){
-        h+=`<button onclick="doCheckIn('${code}',${m.id})" style="width:100%;background:${cfg.bg};border:2px solid ${cfg.bd};border-radius:10px;padding:14px;margin-bottom:8px;text-align:left;display:flex;align-items:center;gap:12px">
-          <div style="flex:1"><div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div></div>
-          <div style="width:46px;height:46px;border-radius:10px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <span style="color:white;font-size:22px;font-weight:800">✓</span>
-          </div>
-        </button>`;
-      }else{
-        h+=`<div style="background:${cfg.bg};border:1.5px solid ${cfg.bd};border-radius:10px;padding:12px 14px;margin-bottom:8px">
-          <div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div>
-          <div style="font-size:12px;color:#A32D2D;margin-top:4px;font-weight:700">${t('busFullCant')}</div>
-        </div>`;
-      }
-    });
-  }
   h+=`</div><div style="height:2rem"></div></div>`;
   return h;
 }
@@ -754,6 +693,35 @@ function scrAdmin(){
     h+=`</div>`;
   }
   h+=`</div><div style="height:2rem"></div></div>`;
+  return h;
+}
+
+/* ===== BOARD LIVE SEARCH (no full re-render) ===== */
+function updateBoardSrch(val,code){
+  S.boardSrch=val;
+  const el=document.getElementById('boardResults');
+  if(el) el.innerHTML=buildBoardResults(code);
+}
+
+function buildBoardResults(code){
+  const cfg=STN[code];
+  const ciIds=stnCI(code);
+  const rIds=stnRoster(code);
+  const srch=(S.boardSrch||'').trim().toLowerCase();
+  const rosterStaff=S.data.staff.filter(m=>rIds.includes(m.id));
+
+  const filtered=srch?rosterStaff.filter(m=>{
+    const name=m.real_name.toLowerCase();
+    if(srch.length<=2){
+      return name.split(' ').some(word=>word.startsWith(srch));
+    }else{
+      return name.includes(srch);
+    }
+  }):[];
+
+  let h='';
+  const full=stnCI(code).length>=getStn(code).seat_limit;
+
   return h;
 }
 
