@@ -82,6 +82,7 @@ const TX={
     staffSearch:'🔍 名前で検索...',noStaffYet:'スタッフが登録されていません。\nGoogle Sheetsに名前を入力して同期してください。',
     editing:'編集中',save:'保存',cancel:'キャンセル',
     realName:'本名',fbName:'Facebook名',noFB:'Facebook名なし',
+    confirmBoard:'名の乗車を確認',confirmBoardBtn:'✓ 乗車確定',selectHint:'名前をタップして選択',
     connecting:'接続中...',connError:'接続できませんでした',retry:'再試行',
     confirReset:'のチェックインをリセットしますか？',
     confirmRemove:'このスタッフを削除しますか？',
@@ -137,6 +138,7 @@ const TX={
     staffSearch:'🔍 Search staff...',noStaffYet:'No staff yet.\nAdd names in Google Sheets and sync.',
     editing:'Editing',save:'Save',cancel:'Cancel',
     realName:'Real name',fbName:'Facebook name',noFB:'no facebook name',
+    confirmBoard:' people boarding',confirmBoardBtn:'✓ Confirm Boarding',selectHint:'Tap names to select',
     connecting:'Connecting...',connError:'Could not connect',retry:'Retry',
     confirReset:'Reset all check-ins for this station?',
     confirmRemove:'Remove this staff member?',
@@ -155,6 +157,7 @@ let S={
   editId:null,editRN:'',editFB:'',
   syncing:false,pushing:false,
   showNoticeInput:false,noticeText:'',
+  boardSelected:[],
   toast:'',toastTimer:null,lastSync:'',
   lang: localStorage.getItem('qcb6_lang')||'ja',
   data:{stations:[],staff:[],roster:[],checkins:[],notices:[]}
@@ -459,7 +462,7 @@ function scrBoard(){
   let h=`<div>
     <div style="background:${cfg.bd};padding:1rem 1.1rem 0.9rem">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <button class="bk" onclick="set({screen:'home',boardSrch:''})" style="color:white">←</button>
+        <button class="bk" onclick="S.boardSelected=[];set({screen:'home',boardSrch:''})" style="color:white">←</button>
         <span style="font-size:17px;font-weight:700;color:white;flex:1">${cfg.emoji} ${esc(cfg.name)}</span>
         <button onclick="set({screen:'history',ht:'${code}'})" style="background:rgba(255,255,255,.2);border:none;border-radius:7px;padding:6px 10px;color:white;font-size:12px;font-weight:600">${t('statusBtn')}</button>
       </div>
@@ -499,7 +502,15 @@ function scrBoard(){
   });
   h+=`</div><div id="boardResults" style="padding:0 1rem;overflow-y:auto;max-height:calc(100vh - 360px)">${buildBoardResults(code)}`;
 
-  h+=`</div><div style="height:2rem"></div></div>`;
+  h+=`</div>
+    <!-- Confirm bar -->
+    <div id="confirmBar" style="display:${S.boardSelected.length>0?'block':'none'};position:sticky;bottom:0;padding:12px 1rem 1.5rem;background:white;border-top:1px solid #e8e8e4;box-shadow:0 -4px 12px rgba(0,0,0,.08)">
+      <button onclick="confirmBoarding('${code}')"
+        style="width:100%;padding:16px;border-radius:12px;border:none;background:#1a1a1a;color:white;font-size:17px;font-weight:800">
+        ✓ ${S.boardSelected.length} ${t('confirmBoardBtn')}
+      </button>
+    </div>
+  </div>`;
   return h;
 }
 
@@ -697,11 +708,51 @@ function scrAdmin(){
   return h;
 }
 
+/* ===== CONFIRM BOARDING ===== */
+async function confirmBoarding(code){
+  const ids=[...S.boardSelected];
+  if(ids.length===0)return;
+  for(const id of ids){
+    const ex=S.data.checkins.find(c=>c.staff_id===id);
+    if(!ex){
+      const{data}=await sb.from('checkins').insert({shift_date:today(),staff_id:id,station_code:code}).select().single();
+      if(data)S.data.checkins.push(data);
+    }
+  }
+  S.boardSelected=[];
+  S.boardSrch='';
+  render();
+}
+
+function toggleSelect(id){
+  const idx=S.boardSelected.indexOf(id);
+  if(idx>=0)S.boardSelected.splice(idx,1);
+  else S.boardSelected.push(id);
+  const el=document.getElementById('boardResults');
+  if(el)el.innerHTML=buildBoardResults(S.as);
+  updateConfirmBar();
+}
+
+function updateConfirmBar(){
+  const bar=document.getElementById('confirmBar');
+  if(!bar)return;
+  const n=S.boardSelected.length;
+  if(n>0){
+    bar.style.display='block';
+    bar.innerHTML=`<button onclick="confirmBoarding('${S.as}')"
+      style="width:100%;padding:16px;border-radius:12px;border:none;background:#1a1a1a;color:white;font-size:17px;font-weight:800;letter-spacing:.2px">
+      ✓ ${n} ${t('confirmBoard')}
+    </button>`;
+  }else{
+    bar.style.display='none';
+  }
+}
+
 /* ===== BOARD LIVE SEARCH (no full re-render) ===== */
 function updateBoardSrch(val,code){
   S.boardSrch=val;
   const el=document.getElementById('boardResults');
-  if(el) el.innerHTML=buildBoardResults(code);
+  if(el)el.innerHTML=buildBoardResults(code);
 }
 
 function buildBoardResults(code){
@@ -730,10 +781,13 @@ function buildBoardResults(code){
       if(waiting.length>0){
         h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 4px">${t('waitingLabel')} (${waiting.length}) — ${t('typeSearch')}</div>`;
         waiting.forEach(m=>{
-          h+=`<div style="padding:11px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px">
-            <div style="flex:1"><div style="font-size:16px;font-weight:500;color:#555">${esc(m.real_name)}</div></div>
-            <div style="width:28px;height:28px;border-radius:6px;border:2px solid #ddd;flex-shrink:0"></div>
-          </div>`;
+          const sel=S.boardSelected.includes(m.id);
+          h+=`<button onclick="toggleSelect(${m.id})" style="width:100%;padding:12px 8px;border:none;border-bottom:1px solid #f0f0ec;background:${sel?cfg.bg:'transparent'};display:flex;align-items:center;gap:12px;text-align:left">
+            <div style="width:30px;height:30px;border-radius:8px;flex-shrink:0;border:2px solid ${sel?cfg.bd:'#ccc'};background:${sel?cfg.bd:'white'};display:flex;align-items:center;justify-content:center">
+              ${sel?`<span style="color:white;font-size:16px;font-weight:800">✓</span>`:''}
+            </div>
+            <div style="font-size:17px;font-weight:${sel?700:500};color:${sel?cfg.dk:'#333'}">${esc(m.real_name)}</div>
+          </button>`;
         });
       }
       if(done.length>0){
@@ -779,10 +833,11 @@ function buildBoardResults(code){
           <button onclick="overrideCheckIn('${code}',${m.id})" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #F5A623;background:#FFF8E6;font-size:13px;color:#A0650A;font-weight:600">${t('override')}</button>
         </div>`;
       } else if(!full){
-        h+=`<button onclick="doCheckIn('${code}',${m.id})" style="width:100%;background:${cfg.bg};border:2px solid ${cfg.bd};border-radius:10px;padding:14px;margin-bottom:8px;text-align:left;display:flex;align-items:center;gap:12px">
-          <div style="flex:1"><div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div></div>
-          <div style="width:46px;height:46px;border-radius:10px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <span style="color:white;font-size:22px;font-weight:800">✓</span>
+        const sel=S.boardSelected.includes(m.id);
+        h+=`<button onclick="toggleSelect(${m.id})" style="width:100%;background:${sel?cfg.bg:'white'};border:2px solid ${sel?cfg.bd:'#e0e0dc'};border-radius:10px;padding:14px;margin-bottom:8px;text-align:left;display:flex;align-items:center;gap:12px">
+          <div style="flex:1"><div style="font-size:20px;font-weight:700;color:${sel?cfg.dk:'#333'}">${esc(m.real_name)}</div></div>
+          <div style="width:46px;height:46px;border-radius:10px;background:${sel?cfg.bd:'#f0f0ec'};border:2px solid ${sel?cfg.bd:'#e0e0dc'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            ${sel?`<span style="color:white;font-size:22px;font-weight:800">✓</span>`:`<span style="color:#ccc;font-size:22px">○</span>`}
           </div>
         </button>`;
       } else {
