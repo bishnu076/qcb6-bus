@@ -367,10 +367,17 @@ async function removeStaff(id){
   S.data.checkins=S.data.checkins.filter(c=>c.staff_id!==id);render();
 }
 function exportCSV(){
-  let rows=['Real Name,Facebook Name,Assigned Station,Boarded,Boarded At,Time'];
+  let rows=['名前 / Real Name,割当ステーション / Assigned Station,乗車 / Boarded,乗車ステーション / Boarded At,時間 / Time'];
   S.data.staff.forEach(m=>{
     const a=getRosterStn(m.id),ci=getCI(m.id);
-    rows.push([m.real_name,m.facebook_name||'',a?getStn(a).name:'',ci?'YES':'NO',ci?getStn(ci.station_code).name:'',ci?new Date(ci.checked_in_at).toLocaleTimeString():''].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+    if(!a)return; // only export people in today's roster
+    rows.push([
+      m.real_name,
+      a?getStn(a).name:'',
+      ci?'YES / 乗車済':'NO / 未乗車',
+      ci?getStn(ci.station_code).name:'',
+      ci?new Date(ci.checked_in_at).toLocaleTimeString():''
+    ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
   });
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
