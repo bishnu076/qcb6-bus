@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>QCB6 Bus Check-in</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f0;min-height:100vh}
+.app{max-width:480px;margin:0 auto;background:#fff;min-height:100vh}
+input[type="text"],input[type="number"],textarea{border:1px solid #ccc;border-radius:8px;padding:9px 13px;font-size:15px;font-family:inherit;width:100%;background:#fff;color:#1a1a1a}
+input:focus,textarea:focus{outline:none;border-color:#555}
+button{font-family:inherit;cursor:pointer}
+.bk{background:none;border:none;font-size:24px;padding:0;line-height:1;color:#666}
+.toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:#1a1a1a;color:white;padding:10px 18px;border-radius:20px;font-size:13px;font-weight:600;z-index:999;white-space:nowrap;max-width:90vw;text-align:center}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<script>
+const SURL='https://rfgahqjayrvrhgebdmdw.supabase.co';
+const SKEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmZ2FocWpheXJ2cmhnZWJkbWR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MzQwNjQsImV4cCI6MjA5NTIxMDA2NH0.XJCYWDIDxdtZxMW1Y9GwkJKhEdRhGylfui-h544d3zs';
+const SHEET_ID='1SMbxwo9VtF44_kFApGM45v-izNG8KkvW2Dc9GNsptkc';
+const SCRIPT_URL='https://script.google.com/macros/s/AKfycbz2wyJBhm5dnC5N-e7zFPi_usBQQy_vEU_DakNMmXQ6TYTcSEXRGJbji1twWSfSxU8khA/exec';
+const sb=supabase.createClient(SURL,SKEY);
+
+const STN={
+  A:{code:'A',name:'柏駅',           gid:'0',         bg:'#FAECE7',bd:'#D85A30',tx:'#993C1D',dk:'#4A1B0C',emoji:'🔴'},
+  B:{code:'B',name:'流山おおたかの森駅',gid:'920957076', bg:'#E6F1FB',bd:'#378ADD',tx:'#185FA5',dk:'#042C53',emoji:'🔵'},
+  C:{code:'C',name:'南流山駅',         gid:'1282817497',bg:'#EAF3DE',bd:'#639922',tx:'#3B6D11',dk:'#173404',emoji:'🟢'}
+};
+const CODES=['A','B','C'];
+function csvURL(gid){return`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${gid}`;}
+
+/* ===== TRANSLATIONS ===== */
+const TX={
+  ja:{
+    title:'QCB6 乗車チェック',
+    sync:'📥 同期', syncing:'同期中...',
+    syncLabel:'Google Sheets から同期',
+    syncSub:'毎朝シフト入力後に同期してください',
+    lastSync:'最終同期: ',
+    rosterOk:'名登録済み · ',rosterBoarded:'名乗車済み',
+    rosterWarn:'本日のロスターが未設定です',
+    rosterWarnSub:'上の「同期」ボタンを押して読み込んでください。',
+    notices:'📢 お知らせ',noticePost:'+ 投稿',
+    noticeCancel:'キャンセル',noticeSend:'📢 全員に送信',
+    noticePH:'全員に知らせたいことを入力...',
+    noNotice:'お知らせはありません',
+    assigned:'名 割り当て済み',limit:'座席上限',
+    full:'満席',tapBoard:'タップして乗車',
+    reportBtn:'📋 出勤レポート',
+    boarded:'乗車済み',seatsLeft:'残席',todayReg:'本日登録',
+    busFull:'満席 — 乗車を停止してください！',
+    searchLabel:'名前を入力（どこからでも一致）',
+    searchPH:'例: SIN, THAPA, KU...',
+    statusBtn:'👥 状況',
+    waitingLabel:'乗車待ち',boardedLabel:'乗車済み',
+    typeSearch:'名前を入力して検索',
+    alreadyHere:'✅ 乗車済み',
+    alreadyElse:'⚠️ 別ステーションで乗車済み',
+    wrongStn:'⚠️ 別ステーション割り当て',
+    assignedTo:'に割り当て',override:'⚡ 例外として乗車許可',
+    noMatch:'に一致するスタッフが見つかりません',
+    tryOther:'別の文字を試してください',
+    results:'検索結果',noStaffSync:'スタッフが登録されていません。\nホームから同期してください。',
+    boardBtn:'✓ 乗車',busFullCant:'満席のため乗車不可',undo:'↩ 取り消し',
+    wrongBus:'⚠️ 誤乗車',noShow:'❌ 未乗車',
+    boardedAt:'で乗車',noStaffAssigned:'本日このステーションにスタッフが割り当てられていません。',
+    resetCI:'🔄 チェックインをリセット',
+    reportTitle:'📋 出勤レポート',
+    pushLabel:'Google Sheets に送信',pushSub:'Boarding Log・Exceptions・Summary タブに保存',
+    push:'📤 送信',pushing:'送信中...',
+    totalLabel:'本日の合計乗車人数',outOf:'名中',
+    wrongBusCount:'⚠️ 誤乗車',noShowCount:'❌ 未乗車',noAssigned:'本日割り当てなし',
+    adminTitle:'⚙️ 設定',seatTitle:'バスの座席上限',
+    seatSub:'各ステーションのバス座席数を設定してください',seats:'席',
+    staffTitle:'スタッフマスター',
+    staffTip:'💡 スタッフの追加はGoogle Sheetsの各タブで行い、「📥 同期」を押してください。',
+    staffSearch:'🔍 名前で検索...',noStaffYet:'スタッフが登録されていません。\nGoogle Sheetsに名前を入力して同期してください。',
+    editing:'編集中',save:'保存',cancel:'キャンセル',
+    realName:'本名',fbName:'Facebook名',noFB:'Facebook名なし',
+    connecting:'接続中...',connError:'接続できませんでした',retry:'再試行',
+    confirReset:'のチェックインをリセットしますか？',
+    confirmRemove:'このスタッフを削除しますか？',
+    confirmOverride:'例外として乗車を許可しますか？',
+    savedOk:'✅ 保存しました',
+    syncDone:'✅ 同期完了！',staffLoaded:'名を読み込みました',
+    syncFail:'❌ 同期失敗 — シートが公開されているか確認してください',
+    pushDone:'✅ Google Sheets に送信しました！',pushFail:'❌ 送信失敗: ',
+  },
+  en:{
+    title:'QCB6 Bus Check-in',
+    sync:'📥 Sync', syncing:'Syncing...',
+    syncLabel:'Sync from Google Sheets',
+    syncSub:'Sync every morning after entering the shift',
+    lastSync:'Last sync: ',
+    rosterOk:' assigned · ',rosterBoarded:' boarded',
+    rosterWarn:"Today's roster not set",
+    rosterWarnSub:'Press the Sync button above to load from Google Sheets.',
+    notices:'📢 Notices',noticePost:'+ Post',
+    noticeCancel:'Cancel',noticeSend:'📢 Send to Everyone',
+    noticePH:'Type a message for all leaders...',
+    noNotice:'No notices',
+    assigned:' assigned today',limit:'Seat limit',
+    full:'FULL',tapBoard:'tap to board',
+    reportBtn:'📋 Attendance Report',
+    boarded:'Boarded',seatsLeft:'Seats Left',todayReg:'Assigned',
+    busFull:'BUS FULL — Stop boarding!',
+    searchLabel:'Type name to search (matches anywhere in name)',
+    searchPH:'e.g. SIN, THAPA, KU...',
+    statusBtn:'👥 Status',
+    waitingLabel:'Waiting to Board',boardedLabel:'Boarded',
+    typeSearch:'Type a name to search',
+    alreadyHere:'✅ Already Boarded',
+    alreadyElse:'⚠️ Boarded at Different Station',
+    wrongStn:'⚠️ Wrong Station',
+    assignedTo:'Assigned to ',override:'⚡ Override — Allow Exception',
+    noMatch:'No staff found matching',
+    tryOther:'Try different letters',
+    results:'Results',noStaffSync:'No staff added.\nSync from home first.',
+    boardBtn:'✓ BOARD',busFullCant:'Bus full — cannot board',undo:'↩ Undo',
+    wrongBus:'⚠️ Wrong Bus',noShow:'❌ No Show',
+    boardedAt:' boarded at',noStaffAssigned:'No staff assigned to this station today.',
+    resetCI:'🔄 Reset Check-ins',
+    reportTitle:'📋 Attendance Report',
+    pushLabel:'Push to Google Sheets',pushSub:'Saves to Boarding Log, Exceptions & Summary tabs',
+    push:'📤 Push',pushing:'Pushing...',
+    totalLabel:'Total Boarded Today',outOf:'out of',
+    wrongBusCount:'⚠️ Wrong Bus',noShowCount:'❌ No Show',noAssigned:'No staff assigned today.',
+    adminTitle:'⚙️ Settings',seatTitle:'Bus Seat Limits',
+    seatSub:'Set the number of seats per bus per station',seats:'seats',
+    staffTitle:'Staff Master List',
+    staffTip:'💡 Add staff in Google Sheets tabs then tap 📥 Sync.',
+    staffSearch:'🔍 Search staff...',noStaffYet:'No staff yet.\nAdd names in Google Sheets and sync.',
+    editing:'Editing',save:'Save',cancel:'Cancel',
+    realName:'Real name',fbName:'Facebook name',noFB:'no facebook name',
+    connecting:'Connecting...',connError:'Could not connect',retry:'Retry',
+    confirReset:'Reset all check-ins for this station?',
+    confirmRemove:'Remove this staff member?',
+    confirmOverride:'Allow this person to board as an exception?',
+    savedOk:'✅ Saved',
+    syncDone:'✅ Synced! ',staffLoaded:' staff loaded',
+    syncFail:'❌ Sync failed — check sheet is set to public viewer',
+    pushDone:'✅ Report pushed to Google Sheets!',pushFail:'❌ Push failed: ',
+  }
+};
+
+/* ===== STATE ===== */
+let S={
+  screen:'loading',as:'A',ht:'A',
+  boardSrch:'',sSrch:'',
+  editId:null,editRN:'',editFB:'',
+  syncing:false,pushing:false,
+  showNoticeInput:false,noticeText:'',
+  toast:'',toastTimer:null,lastSync:'',
+  lang: localStorage.getItem('qcb6_lang')||'ja',
+  data:{stations:[],staff:[],roster:[],checkins:[],notices:[]}
+};
+
+function t(k){return TX[S.lang][k]||TX.ja[k]||k;}
+function toggleLang(){
+  S.lang=S.lang==='ja'?'en':'ja';
+  localStorage.setItem('qcb6_lang',S.lang);
+  render();
+}
+
+function today(){return new Date().toISOString().slice(0,10);}
+function todayLbl(){
+  return S.lang==='ja'
+    ? new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'long'})
+    : new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function set(p){Object.assign(S,p);render();}
+function getStn(code){return S.data.stations.find(s=>s.code===code)||{code,name:STN[code]?.name||'Station '+code,seat_limit:59};}
+function getStaff(id){return S.data.staff.find(s=>s.id===id);}
+function getRosterStn(staffId){const r=S.data.roster.find(r=>r.staff_id===staffId);return r?r.station_code:null;}
+function getCI(staffId){return S.data.checkins.find(c=>c.staff_id===staffId);}
+function stnRoster(code){return S.data.roster.filter(r=>r.station_code===code).map(r=>r.staff_id);}
+function stnCI(code){return S.data.checkins.filter(c=>c.station_code===code).map(c=>c.staff_id);}
+
+function toast(msg,ms=3000){
+  if(S.toastTimer)clearTimeout(S.toastTimer);
+  S.toast=msg;S.toastTimer=setTimeout(()=>{S.toast='';render();},ms);render();
+}
+
+/* ===== DATA ===== */
+async function reloadCI(){const{data}=await sb.from('checkins').select('*').eq('shift_date',today());S.data.checkins=data||[];}
+async function reloadRoster(){const{data}=await sb.from('roster').select('*').eq('shift_date',today());S.data.roster=data||[];}
+async function reloadStaff(){const{data}=await sb.from('staff').select('*').order('real_name');S.data.staff=data||[];}
+async function reloadNotices(){const{data}=await sb.from('notices').select('*').order('created_at',{ascending:false}).limit(10);S.data.notices=data||[];}
+
+async function loadAll(){
+  S.screen='loading';render();
+  try{
+    const[st,sf,ro,ci,no]=await Promise.all([
+      sb.from('stations').select('*').order('code'),
+      sb.from('staff').select('*').order('real_name'),
+      sb.from('roster').select('*').eq('shift_date',today()),
+      sb.from('checkins').select('*').eq('shift_date',today()),
+      sb.from('notices').select('*').order('created_at',{ascending:false}).limit(10)
+    ]);
+    S.data.stations=st.data||[];S.data.staff=sf.data||[];
+    S.data.roster=ro.data||[];S.data.checkins=ci.data||[];S.data.notices=no.data||[];
+    S.screen='home';
+  }catch(e){S.screen='error';}
+  render();subscribe();
+}
+
+function subscribe(){
+  sb.channel('qcb6_live')
+    .on('postgres_changes',{event:'*',schema:'public',table:'checkins'},async()=>{await reloadCI();render();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'roster'},async()=>{await reloadRoster();render();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'staff'},async()=>{await reloadStaff();render();})
+    .on('postgres_changes',{event:'*',schema:'public',table:'notices'},async()=>{await reloadNotices();render();})
+    .subscribe();
+}
+
+/* ===== SYNC ===== */
+async function syncFromSheets(){
+  S.syncing=true;toast(t('syncing'),15000);render();
+  try{
+    const oldRIds=S.data.roster.map(r=>r.id);
+    if(oldRIds.length>0)await sb.from('roster').delete().in('id',oldRIds);
+    S.data.roster=[];let totalRoster=0;
+    for(const code of CODES){
+      const cfg=STN[code];
+      const res=await fetch(csvURL(cfg.gid));
+      const text=await res.text();
+      const parsed=Papa.parse(text.replace(/^\uFEFF/,''),{header:false,skipEmptyLines:true});
+      const names=parsed.data.map(row=>(row[0]||'').replace(/^"|"$/g,'').trim()).filter(n=>n&&n.length>1);
+      for(const name of names){
+        let member=S.data.staff.find(s=>s.real_name.toUpperCase()===name.toUpperCase());
+        if(!member){
+          const maxB=S.data.staff.reduce((m,s)=>Math.max(m,s.badge_number),0);
+          const{data,error}=await sb.from('staff').insert({badge_number:maxB+1,real_name:name,facebook_name:''}).select().single();
+          if(!error&&data){S.data.staff.push(data);member=data;}else continue;
+        }
+        const{data:rData}=await sb.from('roster').insert({shift_date:today(),staff_id:member.id,station_code:code}).select().single();
+        if(rData){S.data.roster.push(rData);totalRoster++;}
+      }
+    }
+    await reloadStaff();
+    S.lastSync=new Date().toLocaleTimeString();
+    toast(t('syncDone')+totalRoster+t('staffLoaded'),4000);
+  }catch(e){toast(t('syncFail')+': '+e.message,6000);}
+  S.syncing=false;render();
+}
+
+/* ===== NOTICES ===== */
+async function postNotice(){
+  const msg=S.noticeText.trim();if(!msg)return;
+  const{data}=await sb.from('notices').insert({message:msg}).select().single();
+  if(data)S.data.notices.unshift(data);
+  S.noticeText='';S.showNoticeInput=false;render();
+}
+async function deleteNotice(id){
+  await sb.from('notices').delete().eq('id',id);
+  S.data.notices=S.data.notices.filter(n=>n.id!==id);render();
+}
+
+/* ===== PUSH ===== */
+async function pushToSheets(){
+  S.pushing=true;toast(t('pushing'),10000);render();
+  try{
+    const boardingLog=S.data.checkins.map(ci=>{
+      const m=getStaff(ci.staff_id),stn=getStn(ci.station_code);
+      return{realName:m?.real_name||'',facebook:m?.facebook_name||'',station:stn.name,time:new Date(ci.checked_in_at).toLocaleTimeString()};
+    });
+    const exceptions=[];
+    CODES.forEach(s=>{
+      const rIds=stnRoster(s),ciIds=stnCI(s);
+      rIds.filter(id=>!ciIds.includes(id)).forEach(id=>{
+        const m=getStaff(id),ci=getCI(id);
+        exceptions.push({realName:m?.real_name||'',facebook:m?.facebook_name||'',assigned:getStn(s).name,boardedAt:ci?getStn(ci.station_code).name:'',type:ci?'Wrong Station':'No Show'});
+      });
+    });
+    const summary={
+      aB:stnCI('A').length,aA:stnRoster('A').length,bB:stnCI('B').length,bA:stnRoster('B').length,
+      cB:stnCI('C').length,cA:stnRoster('C').length,total:S.data.checkins.length,
+      wrong:exceptions.filter(e=>e.type==='Wrong Station').length,noShow:exceptions.filter(e=>e.type==='No Show').length
+    };
+    await fetch(SCRIPT_URL,{method:'POST',mode:'no-cors',body:JSON.stringify({action:'push_report',date:today(),boardingLog,exceptions,summary})});
+    toast(t('pushDone'),4000);
+  }catch(e){toast(t('pushFail')+e.message,5000);}
+  S.pushing=false;render();
+}
+
+/* ===== ACTIONS ===== */
+async function doCheckIn(stnCode,staffId){
+  const ex=S.data.checkins.find(c=>c.staff_id===staffId);
+  if(ex){await sb.from('checkins').delete().eq('id',ex.id);S.data.checkins=S.data.checkins.filter(c=>c.id!==ex.id);}
+  else{const{data}=await sb.from('checkins').insert({shift_date:today(),staff_id:staffId,station_code:stnCode}).select().single();if(data)S.data.checkins.push(data);}
+  S.boardSrch='';render();
+}
+async function overrideCheckIn(stnCode,staffId,name){
+  if(!confirm(t('confirmOverride')+' ('+name+')'))return;
+  await doCheckIn(stnCode,staffId);
+}
+async function resetCI(stnCode){
+  const stn=getStn(stnCode);
+  if(!confirm(stn.name+' '+t('confirReset')))return;
+  const ids=S.data.checkins.filter(c=>c.station_code===stnCode).map(c=>c.id);
+  if(ids.length>0)await sb.from('checkins').delete().in('id',ids);
+  S.data.checkins=S.data.checkins.filter(c=>c.station_code!==stnCode);render();
+}
+async function updateStn(code){
+  const l=document.getElementById('sl'+code);if(!l)return;
+  const limit=parseInt(l.value)||20,name=STN[code].name;
+  await sb.from('stations').update({name,seat_limit:limit}).eq('code',code);
+  const idx=S.data.stations.findIndex(s=>s.code===code);
+  if(idx>=0)S.data.stations[idx]={...S.data.stations[idx],name,seat_limit:limit};
+  toast(t('savedOk'),1500);render();
+}
+async function saveEdit(){
+  const rn=S.editRN.trim(),fb=S.editFB.trim();if(!rn)return;
+  await sb.from('staff').update({real_name:rn,facebook_name:fb}).eq('id',S.editId);
+  const idx=S.data.staff.findIndex(s=>s.id===S.editId);
+  if(idx>=0)S.data.staff[idx]={...S.data.staff[idx],real_name:rn,facebook_name:fb};
+  S.editId=null;render();
+}
+async function removeStaff(id){
+  if(!confirm(t('confirmRemove')))return;
+  await sb.from('staff').delete().eq('id',id);
+  S.data.staff=S.data.staff.filter(s=>s.id!==id);
+  S.data.roster=S.data.roster.filter(r=>r.staff_id!==id);
+  S.data.checkins=S.data.checkins.filter(c=>c.staff_id!==id);render();
+}
+function exportCSV(){
+  let rows=['Real Name,Facebook Name,Assigned Station,Boarded,Boarded At,Time'];
+  S.data.staff.forEach(m=>{
+    const a=getRosterStn(m.id),ci=getCI(m.id);
+    rows.push([m.real_name,m.facebook_name||'',a?getStn(a).name:'',ci?'YES':'NO',ci?getStn(ci.station_code).name:'',ci?new Date(ci.checked_in_at).toLocaleTimeString():''].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
+  });
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
+  a.download='QCB6_'+today()+'.csv';a.click();
+}
+
+/* ===== LANG TOGGLE BUTTON ===== */
+function langBtn(){
+  return`<button onclick="toggleLang()" style="background:none;border:1.5px solid #ddd;border-radius:20px;padding:5px 10px;font-size:12px;font-weight:700;color:#555;display:flex;align-items:center;gap:4px">
+    ${S.lang==='ja'?'🇬🇧 EN':'🇯🇵 JP'}
+  </button>`;
+}
+
+/* ===== HOME ===== */
+function scrHome(){
+  const rSet=S.data.roster.length>0,tot=S.data.checkins.length;
+  let h=`<div style="padding:1.25rem 1.25rem 0.5rem">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <h1 style="font-size:19px;font-weight:700;color:#1a1a1a;flex:1">🚌 ${t('title')}</h1>
+      ${langBtn()}
+      <button onclick="set({screen:'admin',sSrch:''})" style="background:none;border:1px solid #ddd;border-radius:8px;padding:7px 10px;font-size:13px;color:#666">⚙️</button>
+    </div>
+    <p style="font-size:12px;color:#aaa;margin-bottom:12px">${todayLbl()}</p>
+
+    <div style="background:#f7f7f5;border:1px solid #e0e0dc;border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:#1a1a1a">${t('syncLabel')}</div>
+        <div style="font-size:11px;color:#aaa;margin-top:1px">${S.lastSync?t('lastSync')+S.lastSync:t('syncSub')}</div>
+      </div>
+      <button onclick="syncFromSheets()" style="padding:8px 14px;border-radius:8px;border:none;background:${S.syncing?'#aaa':'#1a1a1a'};color:white;font-size:13px;font-weight:700;white-space:nowrap" ${S.syncing?'disabled':''}>
+        ${S.syncing?t('syncing'):t('sync')}
+      </button>
+    </div>`;
+
+  if(!rSet){
+    h+=`<div style="background:#FFF8E6;border:2px solid #F5A623;border-radius:12px;padding:1rem;margin-bottom:10px">
+      <div style="font-size:14px;font-weight:700;color:#A0650A;margin-bottom:4px">⚠️ ${t('rosterWarn')}</div>
+      <div style="font-size:13px;color:#C17D20">${t('rosterWarnSub')}</div>
+    </div>`;
+  }else{
+    h+=`<div style="background:#EAF3DE;border:1px solid #639922;border-radius:10px;padding:9px 12px;margin-bottom:10px">
+      <div style="font-size:13px;color:#3B6D11;font-weight:600">✅ ${S.data.roster.length}${t('rosterOk')}${tot}${t('rosterBoarded')}</div>
+    </div>`;
+  }
+
+  // Notices
+  h+=`<div style="margin-bottom:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:12px;font-weight:700;color:#555">${t('notices')}</div>
+      <button onclick="set({showNoticeInput:!S.showNoticeInput,noticeText:''})" style="background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;color:#555">
+        ${S.showNoticeInput?t('noticeCancel'):t('noticePost')}
+      </button>
+    </div>`;
+  if(S.showNoticeInput){
+    h+=`<div style="background:#fffdf0;border:1.5px solid #F5A623;border-radius:10px;padding:10px;margin-bottom:8px">
+      <textarea id="ntxt" placeholder="${t('noticePH')}" oninput="S.noticeText=this.value" rows="2"
+        style="resize:none;border:1px solid #e0d8b0;border-radius:7px;padding:8px 10px;font-size:14px;margin-bottom:8px;background:#fff"
+      >${esc(S.noticeText)}</textarea>
+      <button onclick="postNotice()" style="width:100%;padding:10px;border-radius:8px;border:none;background:#F5A623;color:white;font-size:14px;font-weight:700">${t('noticeSend')}</button>
+    </div>`;
+  }
+  if(S.data.notices.length===0){
+    h+=`<div style="background:#f9f9f7;border:1px solid #e8e8e4;border-radius:8px;padding:10px 12px;font-size:13px;color:#bbb;text-align:center">${t('noNotice')}</div>`;
+  }else{
+    S.data.notices.forEach(n=>{
+      const time=new Date(n.created_at);
+      const tStr=S.lang==='ja'?time.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}):time.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+      h+=`<div style="background:#fffdf0;border:1px solid #F5C842;border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px">
+        <div style="flex:1">
+          <div style="font-size:14px;color:#1a1a1a;font-weight:500;line-height:1.4">${esc(n.message)}</div>
+          <div style="font-size:11px;color:#aaa;margin-top:3px">${tStr}</div>
+        </div>
+        <button onclick="deleteNotice(${n.id})" style="background:none;border:none;font-size:16px;color:#ddd;padding:0;flex-shrink:0">🗑</button>
+      </div>`;
+    });
+  }
+  h+=`</div>`;
+
+  // Station cards
+  CODES.forEach(code=>{
+    const cfg=STN[code],stn=getStn(code);
+    const cnt=stnCI(code).length,asgn=stnRoster(code).length,lim=stn.seat_limit;
+    const full=cnt>=lim,pct=asgn>0?Math.min(100,Math.round(cnt/asgn*100)):0;
+    h+=`<button onclick="set({screen:'board',as:'${code}',boardSrch:''})"
+      style="width:100%;background:${cfg.bg};border:2px solid ${cfg.bd};border-radius:14px;padding:1rem 1.1rem;display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;text-align:left">
+      <div style="flex:1">
+        <div style="font-size:16px;font-weight:700;color:${cfg.dk};margin-bottom:2px">${cfg.emoji} ${esc(cfg.name)}</div>
+        <div style="font-size:12px;color:${cfg.tx}">${asgn}${t('assigned')} · ${t('limit')} ${lim}</div>
+        <div style="height:5px;width:130px;background:rgba(0,0,0,0.1);border-radius:3px;margin-top:8px">
+          <div style="height:5px;border-radius:3px;width:${pct}%;background:${full?'#E24B4A':cfg.bd}"></div>
+        </div>
+      </div>
+      <div style="text-align:right;margin-left:12px">
+        <div style="font-size:28px;font-weight:800;color:${full?'#A32D2D':cfg.dk};line-height:1">${cnt}/${asgn}</div>
+        <div style="font-size:11px;color:${full?'#A32D2D':cfg.tx};margin-top:2px">${full?t('full'):t('tapBoard')}</div>
+      </div>
+    </button>`;
+  });
+
+  h+=`<button onclick="set({screen:'report'})" style="width:100%;margin-top:4px;padding:11px;border-radius:9px;border:1px solid #ddd;background:#f7f7f5;font-size:13px;color:#555;margin-bottom:2rem">${t('reportBtn')}</button></div>`;
+  return h;
+}
+
+/* ===== BOARDING ===== */
+function scrBoard(){
+  const code=S.as,cfg=STN[code],stn=getStn(code);
+  const ciIds=stnCI(code),cnt=ciIds.length,rem=stn.seat_limit-cnt,full=rem<=0;
+  const rIds=stnRoster(code),srch=(S.boardSrch||'').trim().toLowerCase();
+  const rosterStaff=S.data.staff.filter(m=>rIds.includes(m.id));
+  const filtered=srch?rosterStaff.filter(m=>m.real_name.toLowerCase().includes(srch)):[];
+
+  let h=`<div>
+    <div style="background:${cfg.bd};padding:1rem 1.1rem 0.9rem">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <button class="bk" onclick="set({screen:'home',boardSrch:''})" style="color:white">←</button>
+        <span style="font-size:17px;font-weight:700;color:white;flex:1">${cfg.emoji} ${esc(cfg.name)}</span>
+        <button onclick="set({screen:'history',ht:'${code}'})" style="background:rgba(255,255,255,.2);border:none;border-radius:7px;padding:6px 10px;color:white;font-size:12px;font-weight:600">${t('statusBtn')}</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1;background:rgba(255,255,255,.18);border-radius:10px;padding:8px 11px">
+          <div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.5px;font-weight:700">${t('boarded').toUpperCase()}</div>
+          <div style="font-size:28px;font-weight:800;color:white;line-height:1.1">${cnt}</div>
+        </div>
+        <div style="flex:1;background:${full?'#FCEBEB':'rgba(255,255,255,.18)'};border-radius:10px;padding:8px 11px">
+          <div style="font-size:9px;color:${full?'#A32D2D':'rgba(255,255,255,.7)'};letter-spacing:.5px;font-weight:700">${t('seatsLeft').toUpperCase()}</div>
+          <div style="font-size:28px;font-weight:800;color:${full?'#A32D2D':'white'};line-height:1.1">${rem}</div>
+        </div>
+        <div style="flex:1;background:rgba(255,255,255,.18);border-radius:10px;padding:8px 11px">
+          <div style="font-size:9px;color:rgba(255,255,255,.7);letter-spacing:.5px;font-weight:700">${t('todayReg').toUpperCase()}</div>
+          <div style="font-size:28px;font-weight:800;color:white;line-height:1.1">${rIds.length}</div>
+        </div>
+      </div>
+      ${full?`<div style="margin-top:9px;background:#FCEBEB;border-radius:8px;padding:9px;text-align:center;font-size:14px;color:#A32D2D;font-weight:800">⚠️ ${t('busFull')}</div>`:''}
+    </div>
+
+    <div style="padding:12px 1rem 6px">
+      <div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:.5px;margin-bottom:6px">${t('searchLabel')}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="bsrch" placeholder="${t('searchPH')}" value="${esc(S.boardSrch)}"
+          oninput="set({boardSrch:this.value})"
+          autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false"
+          style="flex:1;font-size:18px;font-weight:600;padding:12px 14px;border-radius:10px;border:2px solid ${cfg.bd};text-transform:uppercase" autofocus />
+        ${S.boardSrch?`<button onclick="set({boardSrch:''})" style="padding:11px 14px;border-radius:10px;border:1px solid #ddd;background:#f5f5f0;font-size:16px;color:#888">✕</button>`:''}
+      </div>
+    </div>
+
+    <div style="padding:4px 1rem 8px;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch">`;
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').forEach(l=>{
+    const has=rosterStaff.some(m=>m.real_name.toUpperCase().startsWith(l));
+    const active=S.boardSrch.toUpperCase()===l;
+    h+=`<button onclick="set({boardSrch:'${l}'})" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid ${has?cfg.bd:'#e8e8e8'};background:${active?cfg.bd:(has?cfg.bg:'#f7f7f5')};color:${active?'white':(has?cfg.dk:'#ccc')};font-size:12px;font-weight:700;margin-right:3px">${l}</button>`;
+  });
+  h+=`</div><div style="padding:0 1rem;overflow-y:auto;max-height:calc(100vh - 360px)">`;
+
+  if(!srch){
+    const waiting=rosterStaff.filter(m=>!ciIds.includes(m.id));
+    const boardedList=rosterStaff.filter(m=>ciIds.includes(m.id));
+    if(rosterStaff.length===0){
+      h+=`<div style="text-align:center;padding:3rem 1rem;color:#bbb;font-size:14px">${t('noStaffSync')}</div>`;
+    }else{
+      if(waiting.length>0){
+        h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 4px">${t('waitingLabel')} (${waiting.length}) — ${t('typeSearch')}</div>`;
+        waiting.forEach(m=>{h+=`<div style="padding:11px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px"><div style="flex:1"><div style="font-size:16px;font-weight:500;color:#555">${esc(m.real_name)}</div></div><div style="width:28px;height:28px;border-radius:6px;border:2px solid #ddd;flex-shrink:0"></div></div>`;});
+      }
+      if(boardedList.length>0){
+        h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.5px;font-weight:700;padding:12px 0 4px">✅ ${t('boardedLabel')} (${boardedList.length})</div>`;
+        boardedList.forEach(m=>{h+=`<div style="padding:9px 0;border-bottom:1px solid #f0f0ec;display:flex;align-items:center;gap:10px;opacity:.5"><div style="flex:1"><div style="font-size:15px;color:#888;text-decoration:line-through">${esc(m.real_name)}</div></div><div style="width:28px;height:28px;border-radius:6px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0"><span style="color:white;font-size:15px">✓</span></div></div>`;});
+      }
+    }
+  }else if(filtered.length===0){
+    h+=`<div style="text-align:center;padding:2rem 1rem;color:#bbb;font-size:14px">${t('noMatch')} "<b>${esc(S.boardSrch)}</b>"<br><span style="font-size:12px">${t('tryOther')}</span></div>`;
+  }else{
+    h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;padding:8px 0 6px">${t('results')} (${filtered.length})</div>`;
+    filtered.forEach(m=>{
+      const exCI=getCI(m.id);
+      const alreadyHere=exCI&&exCI.station_code===code;
+      const boardedElse=exCI&&exCI.station_code!==code;
+      const assignedTo=getRosterStn(m.id);
+      const wrongStn=!rIds.includes(m.id)&&assignedTo&&assignedTo!==code;
+      if(alreadyHere){
+        h+=`<div style="background:#EAF3DE;border:1.5px solid #639922;border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:11px;color:#3B6D11;font-weight:700;margin-bottom:3px">${t('alreadyHere')}</div>
+          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
+          <button onclick="doCheckIn('${code}',${m.id})" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #639922;background:#f5f5f0;font-size:13px;color:#3B6D11;font-weight:600">${t('undo')}</button>
+        </div>`;
+      }else if(boardedElse){
+        const wCfg=STN[exCI.station_code]||STN.A;
+        h+=`<div style="background:#FFF8E6;border:1.5px solid #F5A623;border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">${t('alreadyElse')}</div>
+          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
+          <div style="font-size:12px;color:#A0650A;margin-top:3px">→ ${wCfg.emoji} ${esc(wCfg.name)}</div>
+        </div>`;
+      }else if(wrongStn){
+        const oCfg=STN[assignedTo]||STN.A;
+        h+=`<div style="background:#FFF8E6;border:1.5px solid #F5A623;border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:11px;color:#A0650A;font-weight:700;margin-bottom:3px">${t('wrongStn')}</div>
+          <div style="font-size:20px;font-weight:700;color:#1a1a1a">${esc(m.real_name)}</div>
+          <div style="font-size:12px;color:#A0650A;margin-top:3px">${t('assignedTo')} ${oCfg.emoji} ${esc(oCfg.name)}</div>
+          <button onclick="overrideCheckIn('${code}',${m.id},'${m.real_name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")} ')" style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1.5px solid #F5A623;background:#FFF8E6;font-size:13px;color:#A0650A;font-weight:600">${t('override')}</button>
+        </div>`;
+      }else if(!full){
+        h+=`<button onclick="doCheckIn('${code}',${m.id})" style="width:100%;background:${cfg.bg};border:2px solid ${cfg.bd};border-radius:10px;padding:14px;margin-bottom:8px;text-align:left;display:flex;align-items:center;gap:12px">
+          <div style="flex:1"><div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div></div>
+          <div style="width:46px;height:46px;border-radius:10px;background:${cfg.bd};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="color:white;font-size:22px;font-weight:800">✓</span>
+          </div>
+        </button>`;
+      }else{
+        h+=`<div style="background:${cfg.bg};border:1.5px solid ${cfg.bd};border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:20px;font-weight:700;color:${cfg.dk}">${esc(m.real_name)}</div>
+          <div style="font-size:12px;color:#A32D2D;margin-top:4px;font-weight:700">${t('busFullCant')}</div>
+        </div>`;
+      }
+    });
+  }
+  h+=`</div><div style="height:2rem"></div></div>`;
+  return h;
+}
+
+/* ===== HISTORY ===== */
+function scrHistory(){
+  const code=S.ht,cfg=STN[code],stn=getStn(code);
+  const rIds=stnRoster(code),ciIds=stnCI(code);
+  const boarded=rIds.filter(id=>ciIds.includes(id));
+  const missed=rIds.filter(id=>!ciIds.includes(id));
+  const wrongPpl=missed.filter(id=>getCI(id)!==undefined);
+  const noShow=missed.filter(id=>getCI(id)===undefined);
+
+  const card=(id,type)=>{
+    const m=getStaff(id),ci=getCI(id);if(!m)return'';
+    if(type==='wrong'&&ci){
+      const wCfg=STN[ci.station_code]||STN.A;
+      return`<div style="padding:10px 0;border-bottom:1px solid rgba(245,166,35,.25)">
+        <div style="font-size:15px;font-weight:600;color:#1a1a1a">${esc(m.real_name)}</div>
+        ${m.facebook_name?`<div style="font-size:12px;color:#A0650A">fb: ${esc(m.facebook_name)}</div>`:''}
+        <div style="font-size:12px;color:#A0650A;margin-top:2px">→ ${wCfg.emoji} ${esc(wCfg.name)}</div>
+      </div>`;
+    }
+    return`<div style="padding:10px 0;border-bottom:1px solid #f0f0ec${type==='noshow'?';opacity:.65':''}">
+      <div style="font-size:15px;font-weight:500;color:${type==='noshow'?'#888':'#1a1a1a'}">${esc(m.real_name)}</div>
+      ${m.facebook_name?`<div style="font-size:12px;color:${type==='noshow'?'#bbb':'#aaa'}">fb: ${esc(m.facebook_name)}</div>`:''}
+    </div>`;
+  };
+
+  let h=`<div>
+    <div style="background:${cfg.bg};padding:1rem 1.1rem 0.875rem;border-bottom:1px solid ${cfg.bd}">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <button class="bk" onclick="set({screen:'board',as:'${code}',boardSrch:''})" style="color:${cfg.tx}">←</button>
+        <span style="font-size:17px;font-weight:700;color:${cfg.dk};flex:1">${cfg.emoji} ${esc(cfg.name)}</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1;background:${cfg.bg};border:1px solid ${cfg.bd};border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:9px;color:${cfg.tx};font-weight:700">✅ ${t('boarded').toUpperCase()}</div>
+          <div style="font-size:22px;font-weight:800;color:${cfg.dk}">${boarded.length}</div>
+        </div>
+        <div style="flex:1;background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:9px;color:#A0650A;font-weight:700">${t('wrongBus').toUpperCase()}</div>
+          <div style="font-size:22px;font-weight:800;color:#A0650A">${wrongPpl.length}</div>
+        </div>
+        <div style="flex:1;background:#f5f5f0;border:1px solid #ddd;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:9px;color:#888;font-weight:700">${t('noShow').toUpperCase()}</div>
+          <div style="font-size:22px;font-weight:800;color:#888">${noShow.length}</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:1rem">`;
+
+  if(boarded.length>0){h+=`<div style="font-size:10px;color:#3B6D11;letter-spacing:.5px;font-weight:700;margin-bottom:6px">✅ ${t('boardedLabel')} (${boarded.length})</div>`;boarded.forEach(id=>{h+=card(id,'boarded');});}
+  if(wrongPpl.length>0){h+=`<div style="font-size:10px;color:#A0650A;letter-spacing:.5px;font-weight:700;margin:14px 0 4px">${t('wrongStn')} (${wrongPpl.length})</div><div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:10px;padding:0 10px;margin-bottom:4px">`;wrongPpl.forEach(id=>{h+=card(id,'wrong');});h+=`</div>`;}
+  if(noShow.length>0){h+=`<div style="font-size:10px;color:#888;letter-spacing:.5px;font-weight:700;margin:14px 0 4px">${t('noShow')} (${noShow.length})</div><div style="background:#f5f5f0;border:1px solid #e0e0dc;border-radius:10px;padding:0 10px;margin-bottom:4px">`;noShow.forEach(id=>{h+=card(id,'noshow');});h+=`</div>`;}
+  if(rIds.length===0)h+=`<p style="color:#ccc;font-size:13px;text-align:center;padding:2rem">${t('noStaffAssigned')}</p>`;
+
+  h+=`</div><div style="padding:0 1rem 2.5rem"><button onclick="resetCI('${code}')" style="width:100%;padding:11px;border-radius:9px;border:1px solid #ddd;background:#f7f7f5;font-size:13px;color:#888">${t('resetCI')}</button></div></div>`;
+  return h;
+}
+
+/* ===== REPORT ===== */
+function scrReport(){
+  let tB=0,tS=0,tW=0,tN=0;
+  let h=`<div>
+    <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4">
+      <button class="bk" onclick="set({screen:'home'})">←</button>
+      <div style="flex:1"><div style="font-size:17px;font-weight:700;color:#1a1a1a">${t('reportTitle')}</div><div style="font-size:11px;color:#aaa">${todayLbl()}</div></div>
+      <button onclick="exportCSV()" style="background:#555;border:none;border-radius:8px;padding:8px 10px;color:white;font-size:12px;font-weight:700">⬇️ CSV</button>
+    </div>
+    <div style="padding:10px 1rem;background:#f7f7f5;border-bottom:1px solid #e8e8e4;display:flex;align-items:center;gap:10px">
+      <div style="flex:1"><div style="font-size:13px;font-weight:600;color:#1a1a1a">${t('pushLabel')}</div><div style="font-size:11px;color:#aaa">${t('pushSub')}</div></div>
+      <button onclick="pushToSheets()" style="padding:8px 14px;border-radius:8px;border:none;background:${S.pushing?'#aaa':'#217346'};color:white;font-size:13px;font-weight:700;white-space:nowrap" ${S.pushing?'disabled':''}>${S.pushing?t('pushing'):t('push')}</button>
+    </div>`;
+
+  CODES.forEach(code=>{
+    const cfg=STN[code],stn=getStn(code);
+    const rIds=stnRoster(code),ciIds=stnCI(code);
+    const boarded=rIds.filter(id=>ciIds.includes(id));
+    const missed=rIds.filter(id=>!ciIds.includes(id));
+    const wrongSt=missed.filter(id=>getCI(id)!==undefined);
+    const noShow=missed.filter(id=>getCI(id)===undefined);
+    tB+=boarded.length;tS+=rIds.length;tW+=wrongSt.length;tN+=noShow.length;
+
+    h+=`<div style="padding:1rem;border-bottom:1px solid #f0f0ec">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:15px;font-weight:700;color:${cfg.dk}">${cfg.emoji} ${esc(cfg.name)}</span>
+        <span style="font-size:15px;font-weight:700;color:${cfg.dk}">${boarded.length}/${rIds.length}</span>
+      </div>`;
+    if(boarded.length>0){
+      h+=`<div style="font-size:10px;color:#3B6D11;font-weight:700;margin-bottom:6px">✅ ${t('boardedLabel')} (${boarded.length})</div><div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">`;
+      boarded.forEach(id=>{const m=getStaff(id);if(m)h+=`<span style="background:${cfg.bg};border:1px solid ${cfg.bd};padding:5px 10px;border-radius:20px;font-size:12px;color:${cfg.dk};font-weight:600">${esc(m.real_name)}</span>`;});
+      h+=`</div>`;
+    }
+    if(wrongSt.length>0){
+      h+=`<div style="font-size:10px;color:#A0650A;font-weight:700;margin-bottom:6px">${t('wrongBus')} (${wrongSt.length})</div>`;
+      wrongSt.forEach(id=>{const m=getStaff(id),ci=getCI(id);if(!m||!ci)return;const wCfg=STN[ci.station_code]||STN.A;h+=`<div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:7px 10px;margin-bottom:5px;font-size:13px"><b>${esc(m.real_name)}</b>${m.facebook_name?` · fb: ${esc(m.facebook_name)}`:''} → ${wCfg.emoji} ${esc(wCfg.name)}</div>`;});
+    }
+    if(noShow.length>0){
+      h+=`<div style="font-size:10px;color:#888;font-weight:700;margin-bottom:6px">${t('noShow')} (${noShow.length})</div><div style="display:flex;flex-wrap:wrap;gap:5px">`;
+      noShow.forEach(id=>{const m=getStaff(id);if(m)h+=`<span style="background:#f5f5f0;border:1px solid #e0e0dc;padding:5px 10px;border-radius:20px;font-size:12px;color:#888">${esc(m.real_name)}</span>`;});
+      h+=`</div>`;
+    }
+    if(rIds.length===0)h+=`<p style="color:#ccc;font-size:13px">${t('noAssigned')}</p>`;
+    h+=`</div>`;
+  });
+
+  h+=`<div style="padding:1rem 1rem 3rem">
+    <div style="background:#f7f7f5;border-radius:12px;padding:1.25rem;text-align:center;margin-bottom:10px">
+      <div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:.5px">${t('totalLabel').toUpperCase()}</div>
+      <div style="font-size:52px;font-weight:800;color:#1a1a1a;line-height:1.1">${tB}</div>
+      <div style="font-size:13px;color:#aaa">${t('outOf')} ${tS}</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div style="flex:1;background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:10px;color:#A0650A;font-weight:700">${t('wrongBusCount')}</div>
+        <div style="font-size:24px;font-weight:800;color:#A0650A">${tW}</div>
+      </div>
+      <div style="flex:1;background:#f5f5f0;border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:10px;color:#888;font-weight:700">${t('noShowCount')}</div>
+        <div style="font-size:24px;font-weight:800;color:#888">${tN}</div>
+      </div>
+    </div>
+  </div></div>`;
+  return h;
+}
+
+/* ===== ADMIN ===== */
+function scrAdmin(){
+  const srch=S.sSrch.toLowerCase();
+  const filtered=S.data.staff.filter(m=>m.real_name.toLowerCase().includes(srch)||(m.facebook_name||'').toLowerCase().includes(srch));
+  let h=`<div>
+    <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4">
+      <button class="bk" onclick="set({screen:'home'})">←</button>
+      <span style="font-size:18px;font-weight:700;color:#1a1a1a;flex:1">${t('adminTitle')}</span>
+      ${langBtn()}
+    </div>
+    <div style="padding:1rem;border-bottom:1px solid #f0f0ec">
+      <div style="font-size:11px;color:#888;font-weight:700;letter-spacing:.5px;margin-bottom:4px">${t('seatTitle').toUpperCase()}</div>
+      <div style="font-size:12px;color:#aaa;margin-bottom:10px">${t('seatSub')}</div>`;
+  CODES.forEach(code=>{
+    const cfg=STN[code],stn=getStn(code);
+    h+=`<div style="background:${cfg.bg};border:1px solid ${cfg.bd};border-radius:10px;padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:12px">
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;color:${cfg.dk}">${cfg.emoji} ${esc(cfg.name)}</div>
+        <div style="font-size:12px;color:${cfg.tx};margin-top:2px">${stnRoster(code).length} ${t('assigned')}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="number" id="sl${code}" value="${stn.seat_limit}" onblur="updateStn('${code}')"
+          style="width:70px;background:white;border-color:${cfg.bd};text-align:center;font-size:18px;font-weight:700;padding:8px" />
+        <span style="font-size:13px;color:${cfg.tx};font-weight:600">${t('seats')}</span>
+      </div>
+    </div>`;
+  });
+
+  h+=`</div>
+    <div style="padding:1rem">
+      <div style="font-size:11px;color:#888;font-weight:700;letter-spacing:.5px;margin-bottom:8px">${t('staffTitle').toUpperCase()} (${S.data.staff.length})</div>
+      <div style="background:#EAF3DE;border:1px solid #639922;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#3B6D11">${t('staffTip')}</div>
+      <input type="text" placeholder="${t('staffSearch')}" value="${esc(S.sSrch)}" oninput="set({sSrch:this.value})" style="margin-bottom:10px;background:#f7f7f5;border:1px solid #e0e0dc" />`;
+
+  if(S.data.staff.length===0){
+    h+=`<div style="border:1.5px dashed #ddd;border-radius:10px;padding:2rem;text-align:center;color:#bbb;font-size:13px">${t('noStaffYet')}</div>`;
+  }else if(filtered.length===0){
+    h+=`<div style="text-align:center;color:#bbb;font-size:13px;padding:1rem">—</div>`;
+  }else{
+    h+=`<div style="border:1px solid #e8e8e4;border-radius:10px;overflow:hidden">`;
+    filtered.forEach((m,i)=>{
+      const asgn=getRosterStn(m.id),cfg=asgn?STN[asgn]:null;
+      const isEdit=S.editId===m.id;
+      if(isEdit){
+        h+=`<div style="padding:12px;background:#f7f7f5;${i<filtered.length-1?'border-bottom:1px solid #e0e0dc':''}">
+          <div style="font-size:11px;color:#888;font-weight:700;margin-bottom:6px">${t('editing')}</div>
+          <input type="text" value="${esc(S.editRN)}" oninput="S.editRN=this.value" placeholder="${t('realName')}" style="margin-bottom:6px" />
+          <input type="text" value="${esc(S.editFB)}" oninput="S.editFB=this.value" placeholder="${t('fbName')}" style="margin-bottom:8px" />
+          <div style="display:flex;gap:6px">
+            <button onclick="saveEdit()" style="flex:2;padding:9px;border-radius:7px;border:none;background:#1a1a1a;color:white;font-size:14px;font-weight:700">${t('save')}</button>
+            <button onclick="set({editId:null})" style="flex:1;padding:9px;border-radius:7px;border:1px solid #ddd;background:#f5f5f0;color:#666;font-size:13px">${t('cancel')}</button>
+          </div>
+        </div>`;
+      }else{
+        h+=`<div style="display:flex;align-items:center;padding:10px 12px;${i<filtered.length-1?'border-bottom:1px solid #f0f0ec':''}">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;color:#1a1a1a;font-weight:500">${esc(m.real_name)}</div>
+            <div style="font-size:12px;color:#aaa">${m.facebook_name?'fb: '+esc(m.facebook_name):`<span style="color:#ddd">${t('noFB')}</span>`}</div>
+          </div>
+          ${cfg?`<span style="font-size:14px;margin-right:6px">${cfg.emoji}</span>`:''}
+          <button onclick="set({editId:${m.id},editRN:'${m.real_name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}',editFB:'${(m.facebook_name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'})" style="background:none;border:none;font-size:17px;padding:3px 4px;color:#aaa">✏️</button>
+          <button onclick="removeStaff(${m.id})" style="background:none;border:none;font-size:17px;padding:3px 4px;color:#E24B4A">🗑</button>
+        </div>`;
+      }
+    });
+    h+=`</div>`;
+  }
+  h+=`</div><div style="height:2rem"></div></div>`;
+  return h;
+}
+
+/* ===== RENDER ===== */
+function render(){
+  const app=document.getElementById('app');
+  switch(S.screen){
+    case 'loading': app.innerHTML=`<div style="padding:4rem;text-align:center;color:#aaa"><div style="font-size:40px;margin-bottom:1rem">🚌</div><div>${t('connecting')}</div></div>`; break;
+    case 'error':   app.innerHTML=`<div style="padding:3rem;text-align:center"><div style="font-size:36px;margin-bottom:1rem">⚠️</div><div style="font-size:16px;color:#A32D2D;margin-bottom:1rem">${t('connError')}</div><button onclick="loadAll()" style="padding:10px 20px;border-radius:8px;border:none;background:#1a1a1a;color:white;font-size:14px">${t('retry')}</button></div>`; break;
+    case 'home':    app.innerHTML=scrHome();    break;
+    case 'board':   app.innerHTML=scrBoard();   break;
+    case 'history': app.innerHTML=scrHistory(); break;
+    case 'report':  app.innerHTML=scrReport();  break;
+    case 'admin':   app.innerHTML=scrAdmin();   break;
+    default:        app.innerHTML=scrHome();
+  }
+  if(S.toast){const t=document.createElement('div');t.className='toast';t.textContent=S.toast;document.body.appendChild(t);}
+  else{document.querySelectorAll('.toast').forEach(t=>t.remove());}
+  if(S.screen==='board'){const el=document.getElementById('bsrch');if(el)setTimeout(()=>el.focus(),80);}
+}
+
+loadAll();
+</script>
+</body>
+</html>
