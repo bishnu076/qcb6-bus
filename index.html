@@ -223,10 +223,9 @@ const STN_MAP={
 
 function parseRosterText(text){
   const result={A:[],B:[],C:[],unknown:[]};
-  const lines=text.trim().split('
-');
+  const lines=text.trim().split('\n');
   lines.forEach(line=>{
-    const parts=line.split('	');
+    const parts=line.split('\t');
     if(parts.length<1)return;
     const name=parts[0].trim().replace(/\s+/g,' ');
     if(!name||name.length<2)return;
