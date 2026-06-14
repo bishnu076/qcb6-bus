@@ -25,6 +25,7 @@ const SKEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 const SHEET_ID='1SMbxwo9VtF44_kFApGM45v-izNG8KkvW2Dc9GNsptkc';
 const SCRIPT_URL='https://script.google.com/macros/s/AKfycbzG_L_Ks_3pzCVvzC7u03RXHr-HhYvgbj_Wlv8_jLvWlYcs8gXzAKJAmFkSqp5FnyXECw/exec';
 const sb=supabase.createClient(SURL,SKEY);
+const ADMIN_PASS='bishnu@9845082534';
 
 const STN={
   A:{code:'A',name:'柏駅',           gid:'0',         bg:'#FAECE7',bd:'#D85A30',tx:'#993C1D',dk:'#4A1B0C',emoji:'🔴'},
@@ -158,6 +159,7 @@ let S={
   syncing:false,pushing:false,
   showNoticeInput:false,noticeText:'',
   boardSelected:[],
+  pasteText:'',parsedRoster:null,
   toast:'',toastTimer:null,lastSync:'',
   lang: localStorage.getItem('qcb6_lang')||'ja',
   data:{stations:[],staff:[],roster:[],checkins:[],notices:[]}
@@ -170,7 +172,12 @@ function toggleLang(){
   render();
 }
 
-function today(){return new Date().toISOString().slice(0,10);}
+function today(){
+  return new Intl.DateTimeFormat('en-CA',{
+    timeZone:'Asia/Tokyo',
+    year:'numeric',month:'2-digit',day:'2-digit'
+  }).format(new Date());
+}
 function todayLbl(){
   return S.lang==='ja'
     ? new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'long'})
@@ -191,6 +198,81 @@ function toast(msg,ms=3000){
 }
 
 /* ===== DATA ===== */
+/* ===== ADMIN AUTH ===== */
+function isAdmin(){return sessionStorage.getItem('qcb6_admin')==='yes';}
+function requireAdmin(){
+  if(isAdmin())return true;
+  const pw=prompt('Enter admin password:');
+  if(pw===ADMIN_PASS){sessionStorage.setItem('qcb6_admin','yes');return true;}
+  toast('❌ Wrong password',2000);return false;
+}
+function adminLogout(){sessionStorage.removeItem('qcb6_admin');toast('Logged out',1500);render();}
+
+/* ===== REFRESH ===== */
+async function refreshData(){
+  await Promise.all([reloadCI(),reloadRoster(),reloadStaff(),reloadNotices()]);
+  toast('✅ Refreshed',1200);render();
+}
+
+/* ===== PASTE ROSTER PARSER ===== */
+const STN_MAP={
+  '柏駅':'A','シャトルバス(柏)':'A','柏':'A','kashiwa':'A',
+  '流山おおたかの森駅':'B','流山おおたかの森':'B','otakanomori':'B','流山':'B',
+  '南流山駅':'C','南流山':'C','minami':'C','南流山駅 ':'C'
+};
+
+function parseRosterText(text){
+  const result={A:[],B:[],C:[],unknown:[]};
+  const lines=text.trim().split('
+');
+  lines.forEach(line=>{
+    const parts=line.split('	');
+    if(parts.length<1)return;
+    const name=parts[0].trim().replace(/\s+/g,' ');
+    if(!name||name.length<2)return;
+    // Station is column 4 (index 3) in Laboro format
+    const stnRaw=(parts[3]||parts[parts.length-1]||'').trim();
+    const code=STN_MAP[stnRaw]||STN_MAP[stnRaw.toLowerCase()];
+    if(code){result[code].push(name);}
+    else{result.unknown.push({name,stnRaw});}
+  });
+  return result;
+}
+
+async function applyPastedRoster(){
+  if(!requireAdmin())return;
+  const parsed=S.parsedRoster;
+  if(!parsed)return;
+  S.syncing=true;toast('💾 Saving roster...',15000);render();
+  try{
+    // Clear today's roster
+    const oldIds=S.data.roster.map(r=>r.id);
+    if(oldIds.length>0)await sb.from('roster').delete().in('id',oldIds);
+    S.data.roster=[];
+    let total=0;
+    for(const code of ['A','B','C']){
+      const names=parsed[code]||[];
+      for(const name of names){
+        // Find or create staff
+        let member=S.data.staff.find(s=>s.real_name.toUpperCase()===name.toUpperCase());
+        if(!member){
+          const{data,error}=await sb.from('staff').insert({real_name:name,facebook_name:''}).select().single();
+          if(!error&&data){S.data.staff.push(data);member=data;}else continue;
+        }
+        // Add to roster
+        const{data:rData}=await sb.from('roster').insert({shift_date:today(),staff_id:member.id,station_code:code}).select().single();
+        if(rData){S.data.roster.push(rData);total++;}
+      }
+    }
+    await reloadStaff();
+    S.lastSync=new Date().toLocaleTimeString();
+    S.parsedRoster=null;S.pasteText='';
+    toast('✅ Roster saved! '+total+' staff loaded',4000);
+    set({screen:'home'});
+  }catch(e){toast('❌ Failed: '+e.message,5000);}
+  S.syncing=false;render();
+}
+
 async function reloadCI(){const{data}=await sb.from('checkins').select('*').eq('shift_date',today());S.data.checkins=data||[];}
 async function reloadRoster(){const{data}=await sb.from('roster').select('*').eq('shift_date',today());S.data.roster=data||[];}
 async function reloadStaff(){const{data}=await sb.from('staff').select('*').order('real_name');S.data.staff=data||[];}
@@ -224,6 +306,7 @@ function subscribe(){
 
 /* ===== SYNC ===== */
 async function syncFromSheets(){
+  if(!requireAdmin())return;
   S.syncing=true;toast(t('syncing'),15000);render();
   try{
     const oldRIds=S.data.roster.map(r=>r.id);
@@ -238,8 +321,7 @@ async function syncFromSheets(){
       for(const name of names){
         let member=S.data.staff.find(s=>s.real_name.toUpperCase()===name.toUpperCase());
         if(!member){
-          const maxB=S.data.staff.reduce((m,s)=>Math.max(m,s.badge_number),0);
-          const{data,error}=await sb.from('staff').insert({badge_number:maxB+1,real_name:name,facebook_name:''}).select().single();
+          const{data,error}=await sb.from('staff').insert({real_name:name,facebook_name:''}).select().single();
           if(!error&&data){S.data.staff.push(data);member=data;}else continue;
         }
         const{data:rData}=await sb.from('roster').insert({shift_date:today(),staff_id:member.id,station_code:code}).select().single();
@@ -320,6 +402,7 @@ async function clearStationColors(){
 }
 
 async function resetAllCI(){
+  if(!requireAdmin())return;
   if(!confirm('Reset ALL check-ins for today? This cannot be undone.'))return;
   const ids=S.data.checkins.map(c=>c.id);
   if(ids.length>0)await sb.from('checkins').delete().in('id',ids);
@@ -329,6 +412,7 @@ async function resetAllCI(){
 }
 
 async function resetAllRoster(){
+  if(!requireAdmin())return;
   if(!confirm('Clear today\'s roster? You will need to sync again.'))return;
   const ids=S.data.roster.map(r=>r.id);
   if(ids.length>0)await sb.from('roster').delete().in('id',ids);
@@ -395,9 +479,11 @@ function langBtn(){
 function scrHome(){
   const rSet=S.data.roster.length>0,tot=S.data.checkins.length;
   let h=`<div style="padding:1.25rem 1.25rem 0.5rem">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-      <h1 style="font-size:19px;font-weight:700;color:#1a1a1a;flex:1">🚌 ${t('title')}</h1>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+      <h1 style="font-size:18px;font-weight:700;color:#1a1a1a;flex:1">🚌 ${t('title')}</h1>
       ${langBtn()}
+      <button onclick="refreshData()" style="background:none;border:1px solid #ddd;border-radius:8px;padding:7px 10px;font-size:13px;color:#666" title="Refresh">🔄</button>
+      <button onclick="if(requireAdmin())set({screen:'pasteRoster',pasteText:'',parsedRoster:null})" style="background:none;border:1px solid #639922;border-radius:8px;padding:7px 10px;font-size:13px;color:#3B6D11" title="Paste Roster">📋</button>
       <button onclick="set({screen:'admin',sSrch:''})" style="background:none;border:1px solid #ddd;border-radius:8px;padding:7px 10px;font-size:13px;color:#666">⚙️</button>
     </div>
     <p style="font-size:12px;color:#aaa;margin-bottom:12px">${todayLbl()}</p>
@@ -507,6 +593,7 @@ function scrBoard(){
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
         <button class="bk" onclick="S.boardSelected=[];set({screen:'home',boardSrch:''})" style="color:white">←</button>
         <span style="font-size:17px;font-weight:700;color:white;flex:1">${cfg.emoji} ${esc(cfg.name)}</span>
+        <button onclick="refreshData()" style="background:rgba(255,255,255,.2);border:none;border-radius:7px;padding:6px 10px;color:white;font-size:12px">🔄</button>
         <button onclick="set({screen:'history',ht:'${code}'})" style="background:rgba(255,255,255,.2);border:none;border-radius:7px;padding:6px 10px;color:white;font-size:12px;font-weight:600">${t('statusBtn')}</button>
       </div>
       <div style="display:flex;gap:8px">
@@ -687,8 +774,9 @@ function scrAdmin(){
   let h=`<div>
     <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4">
       <button class="bk" onclick="set({screen:'home'})">←</button>
-      <span style="font-size:18px;font-weight:700;color:#1a1a1a;flex:1">${t('adminTitle')}</span>
+      <span style="font-size:18px;font-weight:700;color:#1a1a1a;flex:1">${t('adminTitle')} ${isAdmin()?'🔓':''}</span>
       ${langBtn()}
+      ${isAdmin()?`<button onclick="adminLogout()" style="background:none;border:1px solid #E24B4A;border-radius:6px;padding:5px 9px;font-size:11px;color:#E24B4A">Logout</button>`:''}
     </div>
     <!-- Reset section -->
     <div style="padding:1rem;border-bottom:1px solid #f0f0ec;background:#fafafa">
@@ -911,6 +999,83 @@ function buildBoardResults(code){
   return h;
 }
 
+/* ===== PASTE ROSTER SCREEN ===== */
+function scrPasteRoster(){
+  const parsed=S.parsedRoster;
+  let h=`<div>
+    <div style="padding:1rem 1.1rem 0.875rem;display:flex;align-items:center;gap:10px;border-bottom:1px solid #e8e8e4">
+      <button class="bk" onclick="set({screen:'home',pasteText:'',parsedRoster:null})">←</button>
+      <div style="flex:1">
+        <div style="font-size:17px;font-weight:700;color:#1a1a1a">📋 Paste Today's Roster</div>
+        <div style="font-size:11px;color:#aaa">Copy from Laboro shift sheet → paste below</div>
+      </div>
+    </div>
+
+    <div style="padding:1rem">
+      <div style="background:#EAF3DE;border:1px solid #639922;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#3B6D11">
+        💡 Copy the full table from your Laboro shift sheet (Name + Shift + Time + Station columns) and paste it below. The app reads column 1 (name) and column 4 (station) automatically.
+      </div>
+
+      <textarea id="pasteArea"
+        placeholder="Paste data here...&#10;Example:&#10;SINGH ABHISHEK	8(8,1)	8:00〜17:00	柏駅&#10;THAPA MANISHA	17(4,0)	17:00〜21:00	流山おおたかの森駅&#10;NEUPANE RABI	21(8,1)	21:00〜6:00	南流山駅"
+        oninput="S.pasteText=this.value;S.parsedRoster=S.pasteText.trim()?parseRosterText(S.pasteText):null;document.getElementById('previewArea').innerHTML=buildPreview();"
+        style="height:200px;resize:vertical;font-size:13px;font-family:monospace;margin-bottom:10px;border:2px solid #639922"
+      >${esc(S.pasteText)}</textarea>
+
+      <div id="previewArea">${buildPreview()}</div>
+    </div>
+
+    ${parsed&&(parsed.A.length+parsed.B.length+parsed.C.length)>0?`
+    <div style="padding:0 1rem 2rem">
+      <button onclick="applyPastedRoster()" style="width:100%;padding:14px;border-radius:10px;border:none;background:#1a1a1a;color:white;font-size:16px;font-weight:800">
+        ✓ Save Roster — ${parsed.A.length+parsed.B.length+parsed.C.length} staff
+      </button>
+    </div>`:''}
+  </div>`;
+  return h;
+}
+
+function buildPreview(){
+  const parsed=S.parsedRoster;
+  if(!parsed)return`<div style="text-align:center;color:#bbb;font-size:13px;padding:1rem">Paste data above to preview</div>`;
+  const total=parsed.A.length+parsed.B.length+parsed.C.length;
+  if(total===0&&parsed.unknown.length===0)return`<div style="text-align:center;color:#bbb;font-size:13px;padding:1rem">No valid data found</div>`;
+
+  let h=`<div style="margin-bottom:12px">
+    <div style="font-size:12px;color:#888;font-weight:700;margin-bottom:8px">PREVIEW — ${total} staff parsed</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">`;
+
+  ['A','B','C'].forEach(code=>{
+    const cfg=STN[code],cnt=parsed[code].length;
+    h+=`<div style="flex:1;background:${cfg.bg};border:1px solid ${cfg.bd};border-radius:8px;padding:8px;text-align:center">
+      <div style="font-size:10px;color:${cfg.tx};font-weight:700">${cfg.emoji} ${cfg.name}</div>
+      <div style="font-size:22px;font-weight:800;color:${cfg.dk}">${cnt}</div>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  ['A','B','C'].forEach(code=>{
+    if(parsed[code].length===0)return;
+    const cfg=STN[code];
+    h+=`<div style="margin-bottom:8px">
+      <div style="font-size:10px;color:${cfg.tx};font-weight:700;margin-bottom:4px">${cfg.emoji} ${cfg.name}</div>
+      <div style="background:${cfg.bg};border:1px solid ${cfg.bd};border-radius:8px;padding:8px;font-size:13px;color:${cfg.dk};line-height:1.8">
+        ${parsed[code].map(n=>esc(n)).join(' · ')}
+      </div>
+    </div>`;
+  });
+
+  if(parsed.unknown&&parsed.unknown.length>0){
+    h+=`<div style="background:#FFF8E6;border:1px solid #F5A623;border-radius:8px;padding:8px;margin-bottom:8px">
+      <div style="font-size:10px;color:#A0650A;font-weight:700;margin-bottom:4px">⚠️ UNKNOWN STATION (${parsed.unknown.length})</div>
+      ${parsed.unknown.map(u=>`<div style="font-size:12px;color:#A0650A">${esc(u.name)} — "${esc(u.stnRaw)}"</div>`).join('')}
+    </div>`;
+  }
+
+  h+=`</div>`;
+  return h;
+}
+
 /* ===== RENDER ===== */
 function render(){
   const app=document.getElementById('app');
@@ -922,6 +1087,7 @@ function render(){
     case 'history': app.innerHTML=scrHistory(); break;
     case 'report':  app.innerHTML=scrReport();  break;
     case 'admin':   app.innerHTML=scrAdmin();   break;
+    case 'pasteRoster': app.innerHTML=scrPasteRoster(); break;
     default:        app.innerHTML=scrHome();
   }
   if(S.toast){const t=document.createElement('div');t.className='toast';t.textContent=S.toast;document.body.appendChild(t);}
