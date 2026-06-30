@@ -307,6 +307,8 @@ function subscribe(){
 async function syncFromSheets(){
   if(!requireAdmin())return;
   S.syncing=true;toast(t('syncing'),15000);render();
+  const skipped=[]; // track every name that failed, with reason
+  const seenThisSync=new Set(); // track names already assigned today (cross-station dupes)
   try{
     const oldRIds=S.data.roster.map(r=>r.id);
     if(oldRIds.length>0)await sb.from('roster').delete().in('id',oldRIds);
@@ -316,19 +318,41 @@ async function syncFromSheets(){
       const res=await fetch(csvURL(cfg.gid));
       const text=await res.text();
       const parsed=Papa.parse(text.replace(/^\uFEFF/,''),{header:false,skipEmptyLines:true});
-      const names=parsed.data.map(row=>(row[0]||'').replace(/^"|"$/g,'').trim()).filter(n=>n&&n.length>1);
+      const rawNames=parsed.data.map(row=>(row[0]||'').replace(/^"|"$/g,'').trim());
+      const names=rawNames.filter(n=>n&&n.length>1);
+
       for(const name of names){
-        let member=S.data.staff.find(s=>s.real_name.toUpperCase()===name.toUpperCase());
+        const key=name.toUpperCase();
+        if(seenThisSync.has(key)){
+          skipped.push({name,station:cfg.name,reason:'すでに別ステーションに割当済み (duplicate across stations)'});
+          continue;
+        }
+        let member=S.data.staff.find(s=>s.real_name.toUpperCase()===key);
         if(!member){
           const{data,error}=await sb.from('staff').insert({real_name:name,facebook_name:''}).select().single();
-          if(!error&&data){S.data.staff.push(data);member=data;}else continue;
+          if(error||!data){
+            skipped.push({name,station:cfg.name,reason:'スタッフ登録失敗: '+(error?.message||'unknown')});
+            continue;
+          }
+          S.data.staff.push(data);member=data;
         }
-        const{data:rData}=await sb.from('roster').insert({shift_date:today(),staff_id:member.id,station_code:code}).select().single();
-        if(rData){S.data.roster.push(rData);totalRoster++;}
+        const{data:rData,error:rErr}=await sb.from('roster').insert({shift_date:today(),staff_id:member.id,station_code:code}).select().single();
+        if(rData){
+          S.data.roster.push(rData);totalRoster++;
+          seenThisSync.add(key);
+        }else{
+          skipped.push({name,station:cfg.name,reason:'ロスター登録失敗: '+(rErr?.message||'unknown')});
+        }
       }
     }
     await reloadStaff();
     S.lastSync=new Date().toLocaleTimeString();
+
+    if(skipped.length>0){
+      const msg=skipped.map(s=>`❌ ${s.name} (${s.station}) — ${s.reason}`).join('\n');
+      console.log('Sync skipped names:\n'+msg);
+      alert(`✅ Synced ${totalRoster} staff\n\n⚠️ ${skipped.length} names were SKIPPED:\n\n`+msg);
+    }
     toast(t('syncDone')+totalRoster+t('staffLoaded'),4000);
   }catch(e){toast(t('syncFail')+': '+e.message,6000);}
   S.syncing=false;render();
